@@ -1,5 +1,5 @@
-const CACHE = "tailscreen-shell-v1";
-const SHELL = ["/", "/styles.css", "/app.js", "/icon.svg", "/apple-touch-icon.png", "/manifest.webmanifest"];
+const CACHE = "tailscreen-shell-v4";
+const SHELL = ["/", "/styles.css?v=4", "/app.js?v=4", "/icon.svg", "/apple-touch-icon.png", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));

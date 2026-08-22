@@ -23,6 +23,7 @@ Edit `config.json` and set the absolute paths used on this server:
 {
   "port": 8787,
   "scanIntervalMs": 30000,
+  "extraThresholdMb": 800,
   "libraries": [
     { "name": "Movies", "path": "/srv/media/Movies" },
     { "name": "TV Shows", "path": "/srv/media/TV Shows" }
@@ -32,6 +33,7 @@ Edit `config.json` and set the absolute paths used on this server:
 
 `config.json` is ignored by Git, so every server can have different paths without creating Git conflicts or publishing its filesystem layout.
 All paths must be absolute, readable directories. Restart TailScreen after changing `config.json`.
+Videos smaller than `extraThresholdMb` are grouped under **Extras** at the bottom of the library. The default cutoff is 800 MB.
 
 Then start the app:
 
@@ -45,6 +47,7 @@ The default launcher is `open` on macOS and `xdg-open` on Linux. To use a specif
 {
   "port": 8787,
   "scanIntervalMs": 30000,
+  "extraThresholdMb": 800,
   "libraries": [
     { "name": "Movies", "path": "/srv/media/Movies" }
   ],
@@ -55,7 +58,7 @@ The default launcher is `open` on macOS and `xdg-open` on Linux. To use a specif
 }
 ```
 
-The arguments are passed directly to the program without a shell. Keep `{file}` where the selected video's absolute path should go. `PORT`, `SCAN_INTERVAL_MS`, `MEDIA_DIRS`, `PLAYER_COMMAND`, and `PLAYER_ARGS_JSON` remain available as optional environment-variable overrides.
+The arguments are passed directly to the program without a shell. Keep `{file}` where the selected video's absolute path should go. `PORT`, `SCAN_INTERVAL_MS`, `EXTRA_THRESHOLD_MB`, `MEDIA_DIRS`, `PLAYER_COMMAND`, and `PLAYER_ARGS_JSON` remain available as optional environment-variable overrides.
 
 ## Open it on the iPad
 

@@ -45,7 +45,7 @@ async function launch(item, button) {
   button.disabled = true;
   try {
     await api(`/api/media/${item.id}/launch`, { method: "POST" });
-    showToast(`Launched “${item.title}” on the server`);
+    showToast(`Opened “${item.title}” in the server's media player`);
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -60,18 +60,26 @@ function render() {
   );
 
   grid.replaceChildren();
+  let extrasHeadingAdded = false;
   for (const item of filtered) {
+    if (item.isExtra && !extrasHeadingAdded) {
+      const heading = document.createElement("h2");
+      heading.className = "section-label";
+      heading.textContent = "Extras";
+      grid.append(heading);
+      extrasHeadingAdded = true;
+    }
     const card = template.content.firstElementChild.cloneNode(true);
     card.querySelector(".media-title-text").textContent = item.title;
     const location = [item.library, item.folder].filter(Boolean).join(" / ");
     card.querySelector(".media-meta").textContent = `${location} · ${formatBytes(item.size)}`;
     card.querySelector(".format-badge").textContent = item.extension;
     card.querySelectorAll('[data-action="play-here"]').forEach((button) => {
-      button.setAttribute("aria-label", `Play ${item.title} here`);
+      button.setAttribute("aria-label", `Play ${item.title} on this device`);
       button.addEventListener("click", () => playHere(item));
     });
     const launchButton = card.querySelector('[data-action="launch"]');
-    launchButton.setAttribute("aria-label", `Launch ${item.title} on server`);
+    launchButton.setAttribute("aria-label", `Play ${item.title} on the server`);
     launchButton.addEventListener("click", () => launch(item, launchButton));
     grid.append(card);
   }

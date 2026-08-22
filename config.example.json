@@ -1,6 +1,7 @@
 {
   "port": 8787,
   "scanIntervalMs": 30000,
+  "extraThresholdMb": 800,
   "libraries": [
     {
       "name": "Movies",

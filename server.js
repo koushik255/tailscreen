@@ -26,7 +26,9 @@ let scanInFlight = null;
 
 async function refreshLibrary() {
   if (scanInFlight) return scanInFlight;
-  scanInFlight = scanMedia(config.libraries)
+  scanInFlight = scanMedia(config.libraries, {
+    extraThresholdBytes: config.extraThresholdMb * 1024 * 1024,
+  })
     .then((items) => {
       media = items;
       mediaById = new Map(items.map((item) => [item.id, item]));
@@ -132,7 +134,7 @@ app.get("/api/media/:id/stream", async (request, response, next) => {
 
 app.use(express.static(path.join(appDirectory, "public"), {
   extensions: ["html"],
-  maxAge: "1h",
+  maxAge: 0,
   setHeaders(response, filePath) {
     if (filePath.endsWith("service-worker.js")) response.setHeader("Cache-Control", "no-cache");
   },

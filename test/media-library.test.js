@@ -27,6 +27,21 @@ test("scanMedia recursively finds supported videos", async () => {
   assert.equal(items[0].library, "Films");
   assert.equal(items[0].folder, "Sci Fi");
   assert.equal(items[0].extension, "MKV");
+  assert.equal(items[0].isExtra, true);
+});
+
+test("scanMedia sorts extras after larger titles", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tailscreen-sort-test-"));
+  await writeFile(path.join(root, "A-extra.mp4"), "small");
+  await writeFile(path.join(root, "Z-movie.mp4"), "large enough");
+
+  const items = await scanMedia(
+    [{ name: "Movies", path: root }],
+    { extraThresholdBytes: 10 },
+  );
+
+  assert.deepEqual(items.map((item) => item.title), ["Z-movie", "A-extra"]);
+  assert.deepEqual(items.map((item) => item.isExtra), [false, true]);
 });
 
 test("scanMedia reports an inaccessible library path", async () => {

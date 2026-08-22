@@ -10,7 +10,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=4" />
     <title>TailScreen</title>
   </head>
   <body>
@@ -22,7 +22,7 @@
 
       <section class="hero">
         <h1>Videos</h1>
-        <p class="subtitle">Browse your server, play on this iPad, or launch a title on the server.</p>
+        <p class="subtitle">Stream a video to this device, or open it on the server's attached screen.</p>
       </section>
 
       <section class="toolbar" aria-label="Library controls">
@@ -58,12 +58,12 @@
           <p class="media-meta"></p>
         </div>
         <div class="card-actions">
-          <button type="button" data-action="play-here">Play here</button>
-          <button type="button" data-action="launch">Launch on server</button>
+          <button class="primary" type="button" data-action="play-here">Play on this device</button>
+          <button type="button" data-action="launch">Play on server</button>
         </div>
       </article>
     </template>
 
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/app.js?v=4"></script>
   </body>
 </html>
