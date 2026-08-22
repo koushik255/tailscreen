@@ -4,8 +4,8 @@
   "description": "Browse and launch media on your private server.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#090b10",
-  "theme_color": "#090b10",
+  "background_color": "#f4f4f0",
+  "theme_color": "#f4f4f0",
   "icons": [
     {
       "src": "/icon.svg",

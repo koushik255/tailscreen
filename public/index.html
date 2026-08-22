@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#090b10" />
+    <meta name="theme-color" content="#f4f4f0" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="TailScreen" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
@@ -16,22 +16,18 @@
   <body>
     <main>
       <header class="topbar">
-        <a class="brand" href="/" aria-label="TailScreen home">
-          <span class="brand-mark">▶</span>
-          <span>TailScreen</span>
-        </a>
-        <button class="icon-button" id="refreshButton" type="button" aria-label="Rescan library" title="Rescan library">↻</button>
+        <a class="brand" href="/">TailScreen</a>
+        <button id="refreshButton" type="button">Rescan</button>
       </header>
 
       <section class="hero">
-        <p class="eyebrow">YOUR PRIVATE SCREENING ROOM</p>
-        <h1>What are we<br />watching?</h1>
+        <h1>Videos</h1>
         <p class="subtitle">Browse your server, play on this iPad, or launch a title on the server.</p>
       </section>
 
       <section class="toolbar" aria-label="Library controls">
         <label class="search">
-          <span aria-hidden="true">⌕</span>
+          <span>Search</span>
           <input id="searchInput" type="search" placeholder="Search your library" aria-label="Search your library" autocomplete="off" />
         </label>
         <div class="library-count" id="libraryCount" aria-live="polite">Connecting…</div>
@@ -40,7 +36,6 @@
       <section class="media-grid" id="mediaGrid" aria-live="polite"></section>
 
       <section class="empty-state hidden" id="emptyState">
-        <div class="empty-icon">▱</div>
         <h2>No videos found</h2>
         <p id="emptyMessage">Add a folder to <code>MEDIA_DIRS</code>, then rescan.</p>
       </section>
@@ -51,25 +46,20 @@
     <dialog id="playerDialog" aria-labelledby="playerTitle">
       <div class="player-header">
         <strong id="playerTitle"></strong>
-        <button class="icon-button" id="closePlayer" type="button" aria-label="Close player">×</button>
+        <button id="closePlayer" type="button" aria-label="Close player">Close</button>
       </div>
       <video id="videoPlayer" controls playsinline></video>
     </dialog>
 
     <template id="mediaCardTemplate">
       <article class="media-card">
-        <button class="poster" type="button" data-action="play-here">
-          <span class="poster-glow"></span>
-          <span class="play-symbol">▶</span>
-          <span class="format-badge"></span>
-        </button>
         <div class="card-copy">
-          <h2 class="media-title"></h2>
+          <h2 class="media-title"><span class="format-badge"></span><span class="media-title-text"></span></h2>
           <p class="media-meta"></p>
         </div>
         <div class="card-actions">
-          <button class="button secondary" type="button" data-action="play-here">Play here</button>
-          <button class="button primary" type="button" data-action="launch">Launch on server</button>
+          <button type="button" data-action="play-here">Play here</button>
+          <button type="button" data-action="launch">Launch on server</button>
         </div>
       </article>
     </template>

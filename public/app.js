@@ -62,7 +62,7 @@ function render() {
   grid.replaceChildren();
   for (const item of filtered) {
     const card = template.content.firstElementChild.cloneNode(true);
-    card.querySelector(".media-title").textContent = item.title;
+    card.querySelector(".media-title-text").textContent = item.title;
     card.querySelector(".media-meta").textContent = `${item.folder} · ${formatBytes(item.size)}`;
     card.querySelector(".format-badge").textContent = item.extension;
     card.querySelectorAll('[data-action="play-here"]').forEach((button) => {
