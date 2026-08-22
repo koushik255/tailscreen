@@ -1,4 +1,9 @@
-import { canPlayNatively, CompatibilityPlayer } from "./mediabunny-player.js";
+import {
+  canPlayNatively,
+  CompatibilityPlayer,
+  StreamingConversionPlayer,
+  UnsupportedVideoError,
+} from "./mediabunny-player.js";
 
 type MediaItem = {
   id: string;
@@ -30,12 +35,14 @@ const compatibility = element<HTMLElement>("#compatibilityPlayer");
 const canvas = element<HTMLCanvasElement>("#playerCanvas");
 const status = element<HTMLElement>("#playerStatus");
 const playButton = element<HTMLButtonElement>("#togglePlayback");
+const playerControls = element<HTMLElement>(".player-controls");
 const seek = element<HTMLInputElement>("#seek");
 const time = element<HTMLElement>("#playerTime");
 const volume = element<HTMLInputElement>("#volume");
 
 let library: MediaItem[] = [];
 let openRequest = 0;
+let nativeMode: "none" | "direct" | "converted" = "none";
 
 const player = new CompatibilityPlayer(canvas, {
   onError: (message) => { status.textContent = message; },
@@ -46,6 +53,14 @@ const player = new CompatibilityPlayer(canvas, {
     time.textContent = `${formatTime(current)} / ${formatTime(duration)}`;
   },
 });
+const convertedPlayer = new StreamingConversionPlayer(
+  nativeVideo,
+  (message) => {
+    compatibility.hidden = false;
+    status.textContent = message;
+  },
+  (message) => { status.textContent = message; },
+);
 
 function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -68,6 +83,8 @@ async function api<T>(path: string): Promise<T> {
 
 function closePlayer(): void {
   openRequest++;
+  nativeMode = "none";
+  convertedPlayer.destroy();
   nativeVideo.pause();
   nativeVideo.removeAttribute("src");
   nativeVideo.load();
@@ -80,6 +97,7 @@ async function useCompatibilityPlayer(url: string, request: number): Promise<voi
   nativeVideo.load();
   nativeVideo.hidden = true;
   compatibility.hidden = false;
+  playerControls.hidden = false;
   status.textContent = "Preparing browser-compatible playback…";
   playButton.disabled = true;
   try {
@@ -88,6 +106,32 @@ async function useCompatibilityPlayer(url: string, request: number): Promise<voi
     status.textContent = "Compatibility playback is ready.";
     playButton.disabled = false;
   } catch (error) {
+    if (error instanceof UnsupportedVideoError && request === openRequest) {
+      await useConvertedPlayer(url, request);
+      return;
+    }
+    status.textContent = error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function useConvertedPlayer(url: string, request: number): Promise<void> {
+  player.destroy();
+  compatibility.hidden = false;
+  canvas.hidden = true;
+  playerControls.hidden = true;
+  nativeVideo.hidden = true;
+  status.textContent = "Converting the container and audio for browser playback…";
+  try {
+    nativeMode = "converted";
+    await convertedPlayer.load(url);
+    if (request !== openRequest) return;
+    compatibility.hidden = true;
+    nativeVideo.hidden = false;
+    await nativeVideo.play().catch(() => undefined);
+  } catch (error) {
+    convertedPlayer.destroy();
+    nativeMode = "none";
+    compatibility.hidden = false;
     status.textContent = error instanceof Error ? error.message : String(error);
   }
 }
@@ -107,6 +151,7 @@ async function openPlayer(item: MediaItem): Promise<void> {
       if (request !== openRequest) return;
       compatibility.hidden = true;
       nativeVideo.hidden = false;
+      nativeMode = "direct";
       nativeVideo.src = url;
       await nativeVideo.play().catch(() => undefined);
     } else {
@@ -166,7 +211,9 @@ search.addEventListener("input", render);
 element<HTMLButtonElement>("#closePlayer").addEventListener("click", () => dialog.close());
 dialog.addEventListener("close", closePlayer);
 nativeVideo.addEventListener("error", () => {
-  if (dialog.open && nativeVideo.src) void useCompatibilityPlayer(nativeVideo.src, openRequest);
+  if (dialog.open && nativeMode === "direct" && nativeVideo.src) {
+    void useCompatibilityPlayer(nativeVideo.src, openRequest);
+  }
 });
 playButton.addEventListener("click", () => {
   if (player.isPlaying) player.pause();

@@ -1,11 +1,16 @@
 import { registerAc3Decoder } from "@mediabunny/ac3";
+import { registerAacEncoder } from "@mediabunny/aac-encoder";
 import { registerDtsDecoder } from "@mediabunny/dts";
 import { registerProresDecoder } from "@mediabunny/prores";
 import {
   ALL_FORMATS,
+  AppendOnlyStreamTarget,
   AudioBufferSink,
   CanvasSink,
+  Conversion,
   Input,
+  Mp4OutputFormat,
+  Output,
   UrlSource,
   type InputTrack,
   type WrappedAudioBuffer,
@@ -13,8 +18,15 @@ import {
 } from "mediabunny";
 
 registerAc3Decoder();
+registerAacEncoder();
 registerDtsDecoder();
 registerProresDecoder();
+
+export class UnsupportedVideoError extends Error {
+  constructor(codec: string | null) {
+    super(`The browser cannot decode the ${codec ?? "unknown"} video track.`);
+  }
+}
 
 export async function canPlayNatively(url: string, video: HTMLVideoElement): Promise<boolean> {
   const input = new Input({ source: new UrlSource(url), formats: ALL_FORMATS });
@@ -74,7 +86,11 @@ export class CompatibilityPlayer {
       ?? await this.input.computeDuration(tracks, { skipLiveWait: true });
     this.current = this.start;
 
-    if (videoTrack && (!(await videoTrack.getCodec()) || !(await videoTrack.canDecode()))) videoTrack = null;
+    const videoCodec = await videoTrack?.getCodec() ?? null;
+    if (videoTrack && (videoCodec === "hevc" || !videoCodec || !(await videoTrack.canDecode()))) {
+      this.destroy();
+      throw new UnsupportedVideoError(videoCodec);
+    }
     if (audioTrack && (!(await audioTrack.getCodec()) || !(await audioTrack.canDecode()))) audioTrack = null;
     if (!videoTrack && !audioTrack) throw new Error("This browser cannot decode this file's audio or video.");
     if (loadId !== this.loadId) return;
@@ -249,5 +265,147 @@ export class CompatibilityPlayer {
   private fail(error: unknown): void {
     this.pause();
     this.events.onError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+export class StreamingConversionPlayer {
+  private input: Input | null = null;
+  private conversion: Conversion | null = null;
+  private mediaSource: MediaSource | null = null;
+  private sourceBuffer: SourceBuffer | null = null;
+  private sourceBufferReady = Promise.resolve();
+  private resolveSourceBuffer: (() => void) | null = null;
+  private objectUrl: string | null = null;
+  private stopped = false;
+
+  constructor(
+    private readonly video: HTMLVideoElement,
+    private readonly onError: (message: string) => void,
+    private readonly onStatus: (message: string) => void,
+  ) {}
+
+  async load(url: string): Promise<void> {
+    this.destroy();
+    this.stopped = false;
+    if (!("MediaSource" in window)) throw new Error("This browser cannot stream converted video.");
+
+    this.mediaSource = new MediaSource();
+    this.objectUrl = URL.createObjectURL(this.mediaSource);
+    this.video.src = this.objectUrl;
+    await this.waitForMediaSource();
+    this.onStatus("Reading the media tracks…");
+    this.sourceBufferReady = new Promise((resolve) => { this.resolveSourceBuffer = resolve; });
+
+    const writable = new WritableStream<Uint8Array>({
+      write: (chunk) => this.append(chunk),
+    });
+    this.input = new Input({ source: new UrlSource(url), formats: ALL_FORMATS });
+    const output = new Output({
+      format: new Mp4OutputFormat({ fastStart: "fragmented", minimumFragmentDuration: 1 }),
+      target: new AppendOnlyStreamTarget(writable),
+    });
+    this.conversion = await Conversion.init({
+      input: this.input,
+      output,
+      tracks: "primary",
+      video: async (track) => {
+        const codec = await track.getCodec();
+        return codec ? { codec } : { discard: true };
+      },
+      audio: { codec: "aac", numberOfChannels: 2 },
+      showWarnings: false,
+    });
+    if (!this.conversion.isValid) throw new Error("This file cannot be converted for browser playback.");
+
+    this.conversion.onProgress = (progress) => {
+      this.onStatus(`Buffering converted playback… ${Math.round(progress * 100)}%`);
+    };
+    const execution = this.conversion.execute().then(async () => {
+      if (!this.stopped && this.mediaSource?.readyState === "open") {
+        await this.waitUntilIdle();
+        this.mediaSource.endOfStream();
+      }
+    });
+    void execution.catch((error: unknown) => {
+      if (!this.stopped) this.onError(error instanceof Error ? error.message : String(error));
+    });
+
+    this.onStatus("Opening the converted stream…");
+    const mimeType = await output.getMimeType();
+    if (!MediaSource.isTypeSupported(mimeType)) {
+      throw new Error(`This browser cannot play the converted stream (${mimeType}).`);
+    }
+    this.sourceBuffer = this.mediaSource.addSourceBuffer(mimeType);
+    this.resolveSourceBuffer?.();
+    this.resolveSourceBuffer = null;
+    await Promise.race([this.waitUntilPlayable(), execution]);
+  }
+
+  destroy(): void {
+    this.stopped = true;
+    void this.conversion?.cancel();
+    this.conversion = null;
+    this.input?.dispose();
+    this.input = null;
+    this.resolveSourceBuffer?.();
+    this.resolveSourceBuffer = null;
+    this.sourceBuffer = null;
+    this.mediaSource = null;
+    if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
+    this.objectUrl = null;
+  }
+
+  private waitForMediaSource(): Promise<void> {
+    if (this.mediaSource?.readyState === "open") return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      this.mediaSource?.addEventListener("sourceopen", () => resolve(), { once: true });
+      this.mediaSource?.addEventListener("sourceclose", () => reject(new Error("Converted stream was closed.")), { once: true });
+    });
+  }
+
+  private waitUntilPlayable(): Promise<void> {
+    if (this.video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error("Converted video took too long to start.")), 30000);
+      this.video.addEventListener("canplay", () => { clearTimeout(timeout); resolve(); }, { once: true });
+      this.video.addEventListener("error", () => { clearTimeout(timeout); reject(new Error("Converted video could not be played.")); }, { once: true });
+    });
+  }
+
+  private async append(chunk: Uint8Array): Promise<void> {
+    await this.sourceBufferReady;
+    const sourceBuffer = this.sourceBuffer;
+    if (!sourceBuffer || this.stopped) throw new Error("Converted stream was stopped.");
+    await this.waitUntilIdle();
+
+    while (!this.stopped && this.bufferedAhead() > 60) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (this.stopped) throw new Error("Converted stream was stopped.");
+
+    if (this.video.currentTime > 30 && sourceBuffer.buffered.length) {
+      const removeBefore = this.video.currentTime - 30;
+      if (sourceBuffer.buffered.start(0) < removeBefore) {
+        sourceBuffer.remove(0, removeBefore);
+        await this.waitUntilIdle();
+      }
+    }
+    sourceBuffer.appendBuffer(new Uint8Array(chunk).buffer);
+    await this.waitUntilIdle();
+  }
+
+  private bufferedAhead(): number {
+    const ranges = this.sourceBuffer?.buffered;
+    if (!ranges?.length) return 0;
+    return Math.max(ranges.end(ranges.length - 1) - this.video.currentTime, 0);
+  }
+
+  private waitUntilIdle(): Promise<void> {
+    const sourceBuffer = this.sourceBuffer;
+    if (!sourceBuffer?.updating) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      sourceBuffer.addEventListener("updateend", () => resolve(), { once: true });
+      sourceBuffer.addEventListener("error", () => reject(new Error("Could not buffer converted video.")), { once: true });
+    });
   }
 }
