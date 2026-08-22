@@ -3,3 +3,5 @@ node_modules/
 config.json
 .DS_Store
 coverage/
+public/app.js
+public/service-worker.js

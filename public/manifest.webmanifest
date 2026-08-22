@@ -1,11 +1,11 @@
 {
-  "name": "TailScreen",
-  "short_name": "TailScreen",
-  "description": "Browse and launch media on your private server.",
+  "name": "Media",
+  "short_name": "Media",
+  "description": "Browse and play media from your private server.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f4f4f0",
-  "theme_color": "#f4f4f0",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
   "icons": [
     {
       "src": "/icon.svg",

@@ -3,16 +3,30 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "An iPad-friendly Tailscale media remote and launcher.",
+  "description": "A small iPad-friendly media browser for a Tailscale server.",
   "scripts": {
-    "dev": "node --watch server.js",
-    "start": "node server.js",
-    "test": "node --test"
+    "build:web": "esbuild web/app.ts web/service-worker.ts --bundle --format=esm --target=safari17 --minify --outdir=public",
+    "build": "npm run typecheck && npm run build:web",
+    "dev": "npm run build:web && tsx watch server.ts",
+    "start": "npm run build:web && tsx server.ts",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "express": "^5.1.0"
+    "@mediabunny/ac3": "^1.55.2",
+    "@mediabunny/dts": "^1.55.2",
+    "@mediabunny/prores": "^1.55.2",
+    "express": "^5.1.0",
+    "mediabunny": "^1.55.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.2.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
   }
 }

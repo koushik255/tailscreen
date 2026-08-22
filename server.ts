@@ -1,49 +1,35 @@
-import express from "express";
+import express, { type ErrorRequestHandler } from "express";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./lib/config.js";
-import { launchMedia } from "./lib/launcher.js";
-import { publicMediaItem, scanMedia } from "./lib/media-library.js";
+import { type MediaItem, publicMediaItem, scanMedia } from "./lib/media-library.js";
 
 const appDirectory = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const config = await loadConfig({ cwd: appDirectory });
-const playerEnvironment = config.player
-  ? {
-      ...process.env,
-      PLAYER_COMMAND: config.player.command,
-      PLAYER_ARGS_JSON: JSON.stringify(config.player.args),
-    }
-  : process.env;
+let media: MediaItem[] = [];
+let mediaById = new Map<string, MediaItem>();
+let lastScannedAt: string | null = null;
+let scanInFlight: Promise<MediaItem[]> | null = null;
 
-let media = [];
-let mediaById = new Map();
-let lastScannedAt = null;
-let scanInFlight = null;
-
-async function refreshLibrary() {
+async function refreshLibrary(): Promise<MediaItem[]> {
   if (scanInFlight) return scanInFlight;
   scanInFlight = scanMedia(config.libraries, {
     extraThresholdBytes: config.extraThresholdMb * 1024 * 1024,
-  })
-    .then((items) => {
-      media = items;
-      mediaById = new Map(items.map((item) => [item.id, item]));
-      lastScannedAt = new Date().toISOString();
-      return items;
-    })
-    .finally(() => {
-      scanInFlight = null;
-    });
+  }).then((items) => {
+    media = items;
+    mediaById = new Map(items.map((item) => [item.id, item]));
+    lastScannedAt = new Date().toISOString();
+    return items;
+  }).finally(() => { scanInFlight = null; });
   return scanInFlight;
 }
 
 app.disable("x-powered-by");
-app.use(express.json({ limit: "16kb" }));
-app.use((request, response, next) => {
+app.use((_request, response, next) => {
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("Referrer-Policy", "no-referrer");
   next();
@@ -60,33 +46,8 @@ app.get("/api/health", (_request, response) => {
 
 app.get("/api/media", async (_request, response, next) => {
   try {
-    if (!lastScannedAt) await refreshLibrary();
-    response.json({
-      items: media.map(publicMediaItem),
-      lastScannedAt,
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/scan", async (_request, response, next) => {
-  try {
     const items = await refreshLibrary();
-    response.json({ count: items.length, lastScannedAt });
-  } catch (error) {
-    next(error);
-  }
-});
-
-app.post("/api/media/:id/launch", async (request, response, next) => {
-  try {
-    const item = mediaById.get(request.params.id);
-    if (!item) return response.status(404).json({ error: "Media item not found" });
-
-    await stat(item.path);
-    await launchMedia(item.path, { env: playerEnvironment });
-    response.status(202).json({ ok: true, title: item.title });
+    response.json({ items: items.map(publicMediaItem), lastScannedAt });
   } catch (error) {
     next(error);
   }
@@ -114,8 +75,7 @@ app.get("/api/media/:id/stream", async (request, response, next) => {
     let start = match[1] ? Number.parseInt(match[1], 10) : 0;
     let end = match[2] ? Number.parseInt(match[2], 10) : details.size - 1;
     if (!match[1] && match[2]) {
-      const suffixLength = Number.parseInt(match[2], 10);
-      start = Math.max(details.size - suffixLength, 0);
+      start = Math.max(details.size - Number.parseInt(match[2], 10), 0);
       end = details.size - 1;
     }
     if (start > end || start >= details.size) {
@@ -140,14 +100,13 @@ app.use(express.static(path.join(appDirectory, "public"), {
   },
 }));
 
-app.get("*path", (_request, response) => {
-  response.sendFile(path.join(appDirectory, "public", "index.html"));
-});
+app.get("*path", (_request, response) => response.sendFile(path.join(appDirectory, "public", "index.html")));
 
-app.use((error, _request, response, _next) => {
+const handleError: ErrorRequestHandler = (error, _request, response, _next) => {
   console.error(error);
-  response.status(500).json({ error: error.message || "Unexpected server error" });
-});
+  response.status(500).json({ error: error instanceof Error ? error.message : "Unexpected server error" });
+};
+app.use(handleError);
 
 export function startServer() {
   if (!config.libraries.length) {
@@ -166,8 +125,6 @@ export function startServer() {
   });
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  startServer();
-}
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) startServer();
 
 export { app, refreshLibrary };

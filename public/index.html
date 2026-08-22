@@ -3,33 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#f4f4f0" />
+    <meta name="theme-color" content="#ffffff" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="TailScreen" />
+    <meta name="apple-mobile-web-app-title" content="Media" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="stylesheet" href="/styles.css?v=4" />
-    <title>TailScreen</title>
+    <link rel="stylesheet" href="/styles.css?v=5" />
+    <title>Media</title>
   </head>
   <body>
     <main>
-      <header class="topbar">
-        <a class="brand" href="/">TailScreen</a>
-        <button id="refreshButton" type="button">Rescan</button>
-      </header>
-
-      <section class="hero">
-        <h1>Videos</h1>
-        <p class="subtitle">Stream a video to this device, or open it on the server's attached screen.</p>
-      </section>
-
       <section class="toolbar" aria-label="Library controls">
-        <label class="search">
-          <span>Search</span>
-          <input id="searchInput" type="search" placeholder="Search your library" aria-label="Search your library" autocomplete="off" />
-        </label>
+        <input id="searchInput" type="search" placeholder="Search" aria-label="Search your library" autocomplete="off" />
         <div class="library-count" id="libraryCount" aria-live="polite">Connecting…</div>
       </section>
 
@@ -37,18 +24,26 @@
 
       <section class="empty-state hidden" id="emptyState">
         <h2>No videos found</h2>
-        <p id="emptyMessage">Add a library to <code>config.json</code>, then rescan.</p>
+        <p id="emptyMessage">Add a library to <code>config.json</code> and reload this page.</p>
       </section>
     </main>
-
-    <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
     <dialog id="playerDialog" aria-labelledby="playerTitle">
       <div class="player-header">
         <strong id="playerTitle"></strong>
         <button id="closePlayer" type="button" aria-label="Close player">Close</button>
       </div>
-      <video id="videoPlayer" controls playsinline></video>
+      <video id="nativePlayer" controls playsinline hidden></video>
+      <section id="compatibilityPlayer" class="compatibility-player" hidden>
+        <canvas id="playerCanvas"></canvas>
+        <p id="playerStatus" role="status">Preparing playback…</p>
+        <div class="player-controls">
+          <button id="togglePlayback" type="button" disabled>Play</button>
+          <input id="seek" type="range" min="0" max="0" value="0" step="0.1" aria-label="Playback position" />
+          <span id="playerTime">0:00 / 0:00</span>
+          <label>Volume <input id="volume" type="range" min="0" max="1" value="1" step="0.05" /></label>
+        </div>
+      </section>
     </dialog>
 
     <template id="mediaCardTemplate">
@@ -57,13 +52,10 @@
           <h2 class="media-title"><span class="format-badge"></span><span class="media-title-text"></span></h2>
           <p class="media-meta"></p>
         </div>
-        <div class="card-actions">
-          <button class="primary" type="button" data-action="play-here">Play on this device</button>
-          <button type="button" data-action="launch">Play on server</button>
-        </div>
+        <button type="button">Play</button>
       </article>
     </template>
 
-    <script type="module" src="/app.js?v=4"></script>
+    <script type="module" src="/app.js?v=5"></script>
   </body>
 </html>

@@ -23,11 +23,11 @@ test("scanMedia recursively finds supported videos", async () => {
 
   const items = await scanMedia([{ name: "Films", path: root }]);
   assert.equal(items.length, 1);
-  assert.equal(items[0].title, "Arrival");
-  assert.equal(items[0].library, "Films");
-  assert.equal(items[0].folder, "Sci Fi");
-  assert.equal(items[0].extension, "MKV");
-  assert.equal(items[0].isExtra, true);
+  assert.equal(items[0]!.title, "Arrival");
+  assert.equal(items[0]!.library, "Films");
+  assert.equal(items[0]!.folder, "Sci Fi");
+  assert.equal(items[0]!.extension, "MKV");
+  assert.equal(items[0]!.isExtra, true);
 });
 
 test("scanMedia sorts extras after larger titles", async () => {
@@ -35,21 +35,15 @@ test("scanMedia sorts extras after larger titles", async () => {
   await writeFile(path.join(root, "A-extra.mp4"), "small");
   await writeFile(path.join(root, "Z-movie.mp4"), "large enough");
 
-  const items = await scanMedia(
-    [{ name: "Movies", path: root }],
-    { extraThresholdBytes: 10 },
-  );
-
+  const items = await scanMedia([{ name: "Movies", path: root }], { extraThresholdBytes: 10 });
   assert.deepEqual(items.map((item) => item.title), ["Z-movie", "A-extra"]);
   assert.deepEqual(items.map((item) => item.isExtra), [false, true]);
 });
 
 test("scanMedia reports an inaccessible library path", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "tailscreen-missing-test-"));
-  const missingPath = path.join(root, "does-not-exist");
-
   await assert.rejects(
-    scanMedia([{ name: "Missing", path: missingPath }]),
+    scanMedia([{ name: "Missing", path: path.join(root, "does-not-exist") }]),
     /Cannot access library "Missing"/,
   );
 });
