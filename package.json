@@ -21,6 +21,7 @@
     "@mediabunny/dts": "^1.55.2",
     "@mediabunny/prores": "^1.55.2",
     "express": "^5.1.0",
+    "matroska-subtitles": "^3.3.2",
     "mediabunny": "^1.55.2"
   },
   "devDependencies": {

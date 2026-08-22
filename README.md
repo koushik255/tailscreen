@@ -4,9 +4,13 @@ TailScreen is a small, installable web app for browsing videos on a server from 
 
 - search the server's video library;
 - play browser-supported video directly; and
-- fall back to client-side Mediabunny playback for other containers and codecs.
+- fall back to client-side Mediabunny playback for other containers and codecs;
+- automatically show text subtitles embedded in MKV files; and
+- load a local SRT, ASS, or SSA file with the **Add subtitles** button.
 
 The compatibility player decodes video progressively and sends decoded audio through Web Audio. AC-3, DTS, and ProRes fallback decoders are included. For HEVC in an unsupported container such as MKV, it progressively remuxes the video to fragmented MP4 and converts the audio to AAC. It does not download an entire multi-gigabyte movie into memory before playback.
+
+When an MKV contains text subtitles, TailScreen automatically chooses an English track when available, or the first subtitle track otherwise. Captions use a custom Arial overlay. Files selected with **Add subtitles** are read only by the browser and are not uploaded to the server.
 
 No cloud service or public port is required. This first version intentionally relies on your Tailscale network and ACLs as the access boundary.
 

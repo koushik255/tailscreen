@@ -4,6 +4,7 @@ import {
   StreamingConversionPlayer,
   UnsupportedVideoError,
 } from "./mediabunny-player.js";
+import { SubtitleController } from "./subtitles.js";
 
 type MediaItem = {
   id: string;
@@ -39,10 +40,14 @@ const playerControls = element<HTMLElement>(".player-controls");
 const seek = element<HTMLInputElement>("#seek");
 const time = element<HTMLElement>("#playerTime");
 const volume = element<HTMLInputElement>("#volume");
+const subtitleOverlay = element<HTMLElement>("#subtitleOverlay");
+const subtitleButton = element<HTMLButtonElement>("#subtitleButton");
+const subtitleFile = element<HTMLInputElement>("#subtitleFile");
 
 let library: MediaItem[] = [];
 let openRequest = 0;
 let nativeMode: "none" | "direct" | "converted" = "none";
+const subtitles = new SubtitleController(subtitleOverlay, subtitleButton);
 
 const player = new CompatibilityPlayer(canvas, {
   onError: (message) => { status.textContent = message; },
@@ -51,6 +56,7 @@ const player = new CompatibilityPlayer(canvas, {
     seek.max = String(duration);
     if (!seek.matches(":active")) seek.value = String(current);
     time.textContent = `${formatTime(current)} / ${formatTime(duration)}`;
+    subtitles.update(current);
   },
 });
 const convertedPlayer = new StreamingConversionPlayer(
@@ -89,6 +95,7 @@ function closePlayer(): void {
   nativeVideo.removeAttribute("src");
   nativeVideo.load();
   player.destroy();
+  subtitles.clear();
 }
 
 async function useCompatibilityPlayer(url: string, request: number): Promise<void> {
@@ -145,6 +152,7 @@ async function openPlayer(item: MediaItem): Promise<void> {
   compatibility.hidden = false;
   status.textContent = "Checking browser support…";
   dialog.showModal();
+  void subtitles.loadEmbedded(item.id);
 
   try {
     if (await canPlayNatively(url, nativeVideo)) {
@@ -221,6 +229,14 @@ playButton.addEventListener("click", () => {
 });
 seek.addEventListener("change", () => void player.seek(Number(seek.value)));
 volume.addEventListener("input", () => player.setVolume(Number(volume.value)));
+nativeVideo.addEventListener("timeupdate", () => subtitles.update(nativeVideo.currentTime));
+nativeVideo.addEventListener("seeking", () => subtitles.update(nativeVideo.currentTime));
+subtitleButton.addEventListener("click", () => subtitleFile.click());
+subtitleFile.addEventListener("change", () => {
+  const file = subtitleFile.files?.[0];
+  if (file) void subtitles.loadFile(file);
+  subtitleFile.value = "";
+});
 
 if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/service-worker.js");
 void loadLibrary();

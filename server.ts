@@ -6,6 +6,12 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./lib/config.js";
 import { type MediaItem, publicMediaItem, scanMedia } from "./lib/media-library.js";
+import {
+  extractEmbeddedSubtitleTrack,
+  type EmbeddedSubtitleTrack,
+  listEmbeddedSubtitleTracks,
+  type SubtitleCue,
+} from "./lib/subtitles.js";
 
 const appDirectory = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -14,6 +20,8 @@ let media: MediaItem[] = [];
 let mediaById = new Map<string, MediaItem>();
 let lastScannedAt: string | null = null;
 let scanInFlight: Promise<MediaItem[]> | null = null;
+const subtitleTracks = new Map<string, Promise<EmbeddedSubtitleTrack[]>>();
+const subtitleCues = new Map<string, SubtitleCue[]>();
 
 async function refreshLibrary(): Promise<MediaItem[]> {
   if (scanInFlight) return scanInFlight;
@@ -89,6 +97,57 @@ app.get("/api/media/:id/stream", async (request, response, next) => {
     return createReadStream(item.path, { start, end }).pipe(response);
   } catch (error) {
     next(error);
+  }
+});
+
+app.get("/api/media/:id/subtitles", async (request, response, next) => {
+  try {
+    const item = mediaById.get(request.params.id);
+    if (!item) return response.status(404).json({ error: "Media item not found" });
+    if (item.extension !== "MKV") return response.json({ tracks: [] });
+
+    const key = `${item.id}:${item.modifiedAt}`;
+    let pending = subtitleTracks.get(key);
+    if (!pending) {
+      pending = listEmbeddedSubtitleTracks(item.path);
+      subtitleTracks.set(key, pending);
+    }
+    response.json({ tracks: await pending });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/media/:id/subtitles/:trackNumber", async (request, response, next) => {
+  try {
+    const item = mediaById.get(request.params.id);
+    if (!item) return response.status(404).json({ error: "Media item not found" });
+    const trackNumber = Number.parseInt(request.params.trackNumber, 10);
+    if (!Number.isInteger(trackNumber)) return response.status(400).json({ error: "Invalid subtitle track" });
+
+    const trackKey = `${item.id}:${item.modifiedAt}:${trackNumber}`;
+    response.type("application/x-ndjson");
+    response.setHeader("Cache-Control", "private, max-age=3600");
+    const cached = subtitleCues.get(trackKey);
+    if (cached) {
+      for (const cue of cached) response.write(`${JSON.stringify(cue)}\n`);
+      return response.end();
+    }
+
+    const cues: SubtitleCue[] = [];
+    const extraction = extractEmbeddedSubtitleTrack(item.path, trackNumber, (cue) => {
+      cues.push(cue);
+      response.write(`${JSON.stringify(cue)}\n`);
+    });
+    response.on("close", () => {
+      if (!response.writableEnded) extraction.cancel();
+    });
+    await extraction.done;
+    subtitleCues.set(trackKey, cues);
+    response.end();
+  } catch (error) {
+    if (response.headersSent) response.end();
+    else next(error);
   }
 });
 

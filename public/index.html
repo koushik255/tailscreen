@@ -10,7 +10,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="stylesheet" href="/styles.css?v=6" />
+    <link rel="stylesheet" href="/styles.css?v=7" />
     <title>Media</title>
   </head>
   <body>
@@ -31,11 +31,18 @@
     <dialog id="playerDialog" aria-labelledby="playerTitle">
       <div class="player-header">
         <strong id="playerTitle"></strong>
-        <button id="closePlayer" type="button" aria-label="Close player">Close</button>
+        <div class="player-actions">
+          <button id="subtitleButton" type="button">Add subtitles</button>
+          <input id="subtitleFile" type="file" accept=".srt,.ass,.ssa" hidden />
+          <button id="closePlayer" type="button" aria-label="Close player">Close</button>
+        </div>
       </div>
-      <video id="nativePlayer" controls playsinline hidden></video>
+      <div class="player-surface">
+        <video id="nativePlayer" controls playsinline hidden></video>
+        <canvas id="playerCanvas" hidden></canvas>
+        <div id="subtitleOverlay" class="subtitle-overlay" aria-live="off"></div>
+      </div>
       <section id="compatibilityPlayer" class="compatibility-player" hidden>
-        <canvas id="playerCanvas"></canvas>
         <p id="playerStatus" role="status">Preparing playback…</p>
         <div class="player-controls">
           <button id="togglePlayback" type="button" disabled>Play</button>
@@ -56,6 +63,6 @@
       </article>
     </template>
 
-    <script type="module" src="/app.js?v=6"></script>
+    <script type="module" src="/app.js?v=7"></script>
   </body>
 </html>
