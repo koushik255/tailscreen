@@ -44,12 +44,17 @@ const volume = element<HTMLInputElement>("#volume");
 const subtitleOverlay = element<HTMLElement>("#subtitleOverlay");
 const subtitleButton = element<HTMLButtonElement>("#subtitleButton");
 const subtitleFile = element<HTMLInputElement>("#subtitleFile");
+const clipDuration = element<HTMLInputElement>("#clipDuration");
+const clipButton = element<HTMLButtonElement>("#clipButton");
+const clipStatus = element<HTMLElement>("#clipStatus");
+const clipLink = element<HTMLAnchorElement>("#clipLink");
 
 let library: MediaItem[] = [];
 let openRequest = 0;
 let nativeMode: "none" | "direct" | "converted" = "none";
 let activeMediaId: string | null = null;
 let libraryScrollY = 0;
+let clipRequest: AbortController | null = null;
 const subtitles = new SubtitleController(subtitleOverlay, subtitleButton);
 
 const player = new CompatibilityPlayer(canvas, {
@@ -83,8 +88,8 @@ function formatTime(seconds: number): string {
   return `${minutes}:${Math.floor(seconds % 60).toString().padStart(2, "0")}`;
 }
 
-async function api<T>(path: string): Promise<T> {
-  const response = await fetch(path);
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, init);
   const payload = await response.json().catch(() => ({})) as { error?: string };
   if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
   return payload as T;
@@ -92,6 +97,8 @@ async function api<T>(path: string): Promise<T> {
 
 function stopPlayback(): void {
   openRequest++;
+  clipRequest?.abort();
+  clipRequest = null;
   nativeMode = "none";
   convertedPlayer.destroy();
   nativeVideo.pause();
@@ -99,6 +106,13 @@ function stopPlayback(): void {
   nativeVideo.load();
   player.destroy();
   subtitles.clear();
+  seek.value = "0";
+  seek.max = "0";
+  time.textContent = "0:00 / 0:00";
+  clipButton.disabled = false;
+  clipStatus.textContent = "";
+  clipLink.hidden = true;
+  clipLink.removeAttribute("href");
 }
 
 function showLibrary(): void {
@@ -114,6 +128,24 @@ function backToLibrary(): void {
   const state = history.state as { mediaId?: unknown } | null;
   if (activeMediaId && state?.mediaId === activeMediaId) history.back();
   else showLibrary();
+}
+
+function showAv1Requirement(secureContext: boolean): void {
+  player.destroy();
+  nativeVideo.hidden = true;
+  canvas.hidden = true;
+  compatibility.hidden = false;
+  playerControls.hidden = true;
+  if (secureContext) {
+    status.textContent = "This device does not provide an AV1 WebCodecs decoder.";
+    return;
+  }
+
+  const secureUrl = `https://${location.hostname}${location.pathname}${location.search}${location.hash}`;
+  const link = document.createElement("a");
+  link.href = secureUrl;
+  link.textContent = "Open the secure player";
+  status.replaceChildren("Seekable AV1 playback requires HTTPS. ", link, ".");
 }
 
 async function useCompatibilityPlayer(url: string, request: number): Promise<void> {
@@ -132,6 +164,10 @@ async function useCompatibilityPlayer(url: string, request: number): Promise<voi
     playButton.disabled = false;
   } catch (error) {
     if (error instanceof UnsupportedVideoError && request === openRequest) {
+      if (error.codec === "av1") {
+        showAv1Requirement(isSecureContext);
+        return;
+      }
       await useConvertedPlayer(url, request);
       return;
     }
@@ -191,6 +227,71 @@ async function openPlayer(item: MediaItem, pushHistory = true): Promise<void> {
     }
   } catch {
     if (request === openRequest) await useCompatibilityPlayer(url, request);
+  }
+}
+
+function currentPlaybackTime(): number {
+  return nativeMode === "none" ? Number(seek.value) : nativeVideo.currentTime;
+}
+
+async function createClip(): Promise<void> {
+  if (!activeMediaId) return;
+  const duration = Number(clipDuration.value);
+  const end = currentPlaybackTime();
+  if (!Number.isFinite(duration) || duration < 1 || duration > 60) {
+    clipStatus.textContent = "Choose between 1 and 60 seconds.";
+    return;
+  }
+  if (!Number.isFinite(end) || end <= 0) {
+    clipStatus.textContent = "Play or seek into the movie first.";
+    return;
+  }
+
+  clipRequest?.abort();
+  const request = new AbortController();
+  clipRequest = request;
+  clipButton.disabled = true;
+  clipLink.hidden = true;
+  clipStatus.textContent = "Starting clip…";
+
+  try {
+    const created = await api<{ status_url?: string }>(`/api/media/${activeMediaId}/clips`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ end, duration }),
+      signal: request.signal,
+    });
+    if (!created.status_url) throw new Error("Clip service did not return a status URL.");
+
+    while (!request.signal.aborted) {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      if (request.signal.aborted) return;
+      const job = await api<{
+        status?: string;
+        clip_url?: string;
+        server_path?: string;
+        error?: string;
+        message?: string;
+      }>(created.status_url, { signal: request.signal });
+
+      if (job.status === "complete") {
+        if (!job.clip_url) throw new Error("Clip completed without a clip URL.");
+        clipStatus.textContent = "Clip ready.";
+        clipLink.href = job.clip_url;
+        clipLink.title = job.server_path || "";
+        clipLink.hidden = false;
+        return;
+      }
+      if (job.status === "failed") throw new Error(job.error || job.message || "Clip failed.");
+      clipStatus.textContent = "Encoding clip…";
+    }
+  } catch (error) {
+    if (!request.signal.aborted) clipStatus.textContent = error instanceof Error ? error.message : String(error);
+  } finally {
+    if (clipRequest === request) {
+      clipRequest = null;
+      clipButton.disabled = false;
+    }
   }
 }
 
@@ -267,6 +368,7 @@ subtitleFile.addEventListener("change", () => {
   if (file) void subtitles.loadFile(file);
   subtitleFile.value = "";
 });
+clipButton.addEventListener("click", () => void createClip());
 
 window.addEventListener("popstate", (event) => {
   const mediaId = (event.state as { mediaId?: unknown } | null)?.mediaId;

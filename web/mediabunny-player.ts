@@ -23,7 +23,7 @@ registerDtsDecoder();
 registerProresDecoder();
 
 export class UnsupportedVideoError extends Error {
-  constructor(codec: string | null) {
+  constructor(readonly codec: string | null) {
     super(`The browser cannot decode the ${codec ?? "unknown"} video track.`);
   }
 }
@@ -269,12 +269,15 @@ export class CompatibilityPlayer {
 }
 
 export class StreamingConversionPlayer {
+  private static readonly maxBufferedAhead = 12;
   private input: Input | null = null;
   private conversion: Conversion | null = null;
   private mediaSource: MediaSource | null = null;
   private sourceBuffer: SourceBuffer | null = null;
   private sourceBufferReady = Promise.resolve();
   private resolveSourceBuffer: (() => void) | null = null;
+  private firstAppendReady = Promise.resolve();
+  private resolveFirstAppend: (() => void) | null = null;
   private objectUrl: string | null = null;
   private stopped = false;
 
@@ -295,6 +298,7 @@ export class StreamingConversionPlayer {
     await this.waitForMediaSource();
     this.onStatus("Reading the media tracks…");
     this.sourceBufferReady = new Promise((resolve) => { this.resolveSourceBuffer = resolve; });
+    this.firstAppendReady = new Promise((resolve) => { this.resolveFirstAppend = resolve; });
 
     const writable = new WritableStream<Uint8Array>({
       write: (chunk) => this.append(chunk),
@@ -338,7 +342,7 @@ export class StreamingConversionPlayer {
     this.sourceBuffer = this.mediaSource.addSourceBuffer(mimeType);
     this.resolveSourceBuffer?.();
     this.resolveSourceBuffer = null;
-    await Promise.race([this.waitUntilPlayable(), execution]);
+    await Promise.race([this.waitUntilPlayable(), this.waitUntilBuffered(), this.firstAppendReady, execution]);
   }
 
   destroy(): void {
@@ -349,6 +353,8 @@ export class StreamingConversionPlayer {
     this.input = null;
     this.resolveSourceBuffer?.();
     this.resolveSourceBuffer = null;
+    this.resolveFirstAppend?.();
+    this.resolveFirstAppend = null;
     this.sourceBuffer = null;
     this.mediaSource = null;
     if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
@@ -372,13 +378,29 @@ export class StreamingConversionPlayer {
     });
   }
 
+  private waitUntilBuffered(): Promise<void> {
+    const sourceBuffer = this.sourceBuffer;
+    if (!sourceBuffer) return Promise.reject(new Error("Converted stream was not initialized."));
+    if (sourceBuffer.buffered.length) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const check = () => {
+        if (sourceBuffer.buffered.length) {
+          sourceBuffer.removeEventListener("updateend", check);
+          resolve();
+        }
+      };
+      sourceBuffer.addEventListener("updateend", check);
+      sourceBuffer.addEventListener("error", () => reject(new Error("Could not buffer converted video.")), { once: true });
+    });
+  }
+
   private async append(chunk: Uint8Array): Promise<void> {
     await this.sourceBufferReady;
     const sourceBuffer = this.sourceBuffer;
     if (!sourceBuffer || this.stopped) throw new Error("Converted stream was stopped.");
     await this.waitUntilIdle();
 
-    while (!this.stopped && this.bufferedAhead() > 60) {
+    while (!this.stopped && this.bufferedAhead() > StreamingConversionPlayer.maxBufferedAhead) {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     if (this.stopped) throw new Error("Converted stream was stopped.");
@@ -390,8 +412,29 @@ export class StreamingConversionPlayer {
         await this.waitUntilIdle();
       }
     }
-    sourceBuffer.appendBuffer(new Uint8Array(chunk).buffer);
-    await this.waitUntilIdle();
+    while (!this.stopped) {
+      try {
+        sourceBuffer.appendBuffer(new Uint8Array(chunk).buffer);
+        await this.waitUntilIdle();
+        this.resolveFirstAppend?.();
+        this.resolveFirstAppend = null;
+        return;
+      } catch (error) {
+        if (!(error instanceof DOMException) || error.name !== "QuotaExceededError") throw error;
+        await this.removeOldBuffer();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    }
+  }
+
+  private async removeOldBuffer(): Promise<void> {
+    const sourceBuffer = this.sourceBuffer;
+    if (!sourceBuffer?.buffered.length || this.video.currentTime <= 10) return;
+    const removeBefore = this.video.currentTime - 10;
+    if (sourceBuffer.buffered.start(0) < removeBefore) {
+      sourceBuffer.remove(0, removeBefore);
+      await this.waitUntilIdle();
+    }
   }
 
   private bufferedAhead(): number {

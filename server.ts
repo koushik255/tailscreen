@@ -4,6 +4,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { clipMediaPath, clipServiceUrl } from "./lib/clips.js";
 import { loadConfig } from "./lib/config.js";
 import { type MediaItem, publicMediaItem, scanMedia } from "./lib/media-library.js";
 import {
@@ -22,6 +23,8 @@ let lastScannedAt: string | null = null;
 let scanInFlight: Promise<MediaItem[]> | null = null;
 const subtitleTracks = new Map<string, Promise<EmbeddedSubtitleTrack[]>>();
 const subtitleCues = new Map<string, SubtitleCue[]>();
+const clipApiBase = new URL(process.env.CLIP_API_URL || "http://100.98.83.82:8765");
+const clipMediaRoot = path.resolve(process.env.CLIP_MEDIA_ROOT || "/home/koushik/Downloads");
 
 async function refreshLibrary(): Promise<MediaItem[]> {
   if (scanInFlight) return scanInFlight;
@@ -42,6 +45,7 @@ app.use((_request, response, next) => {
   response.setHeader("Referrer-Policy", "no-referrer");
   next();
 });
+app.use(express.json({ limit: "4kb" }));
 
 app.get("/api/health", (_request, response) => {
   response.json({
@@ -148,6 +152,56 @@ app.get("/api/media/:id/subtitles/:trackNumber", async (request, response, next)
   } catch (error) {
     if (response.headersSent) response.end();
     else next(error);
+  }
+});
+
+app.post("/api/media/:id/clips", async (request, response, next) => {
+  try {
+    const item = mediaById.get(request.params.id);
+    if (!item) return response.status(404).json({ error: "Media item not found" });
+
+    const end = Number(request.body?.end);
+    const duration = Number(request.body?.duration);
+    if (!Number.isFinite(end) || end < 0) return response.status(400).json({ error: "end must be zero or greater" });
+    if (!Number.isFinite(duration) || duration < 1 || duration > 60) {
+      return response.status(400).json({ error: "duration must be between 1 and 60 seconds" });
+    }
+
+    const upstream = await fetch(new URL("/api/clips", clipApiBase), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: clipMediaPath(item.path, clipMediaRoot), end, duration }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const payload = await upstream.json().catch(() => ({})) as Record<string, unknown>;
+    if (!upstream.ok) return response.status(upstream.status).json(payload);
+    if (typeof payload.status_url !== "string") {
+      return response.status(502).json({ error: "Clip service did not return a status_url" });
+    }
+
+    const statusTarget = clipServiceUrl(clipApiBase, payload.status_url);
+    response.status(upstream.status).json({
+      ...payload,
+      status_url: `/api/clips/status?path=${encodeURIComponent(statusTarget.pathname + statusTarget.search)}`,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/clips/status", async (request, response, next) => {
+  try {
+    if (typeof request.query.path !== "string") return response.status(400).json({ error: "Missing clip status path" });
+    const upstream = await fetch(clipServiceUrl(clipApiBase, request.query.path), {
+      signal: AbortSignal.timeout(15_000),
+    });
+    const payload = await upstream.json().catch(() => ({})) as Record<string, unknown>;
+    if (typeof payload.clip_url === "string") {
+      payload.clip_url = clipServiceUrl(clipApiBase, payload.clip_url).href;
+    }
+    response.status(upstream.status).json(payload);
+  } catch (error) {
+    next(error);
   }
 });
 

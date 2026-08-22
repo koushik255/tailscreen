@@ -6,11 +6,14 @@ TailScreen is a small, installable web app for browsing videos on a server from 
 - play browser-supported video directly; and
 - fall back to client-side Mediabunny playback for other containers and codecs;
 - automatically show text subtitles embedded in MKV files; and
-- load a local SRT, ASS, or SSA file with the **Add subtitles** button.
+- load a local SRT, ASS, or SSA file with the **Add subtitles** button; and
+- create a 1–60 second MP4 clip ending at the current playback position through StopAndGo.
 
 The compatibility player decodes video progressively and sends decoded audio through Web Audio. AC-3, DTS, and ProRes fallback decoders are included. For HEVC in an unsupported container such as MKV, it progressively remuxes the video to fragmented MP4 and converts the audio to AAC. It does not download an entire multi-gigabyte movie into memory before playback.
 
 When an MKV contains text subtitles, TailScreen automatically chooses an English track when available, or the first subtitle track otherwise. Captions use a custom Arial overlay. Files selected with **Add subtitles** are read only by the browser and are not uploaded to the server.
+
+Seekable AV1 playback uses Mediabunny with the browser's WebCodecs decoder, so the site must be opened over HTTPS and the device must support the movie's AV1 profile. TailScreen does not use the forward-only MP4 remux fallback for AV1. If the player reports that HTTPS is required, enable the tailnet-only HTTPS address with `tailscale serve --bg 8787` and open the URL it prints.
 
 No cloud service or public port is required. This first version intentionally relies on your Tailscale network and ACLs as the access boundary.
 
@@ -41,13 +44,15 @@ Edit `config.json` and set the absolute paths used on this server:
 All paths must be absolute, readable directories. Restart TailScreen after changing `config.json`.
 Videos smaller than `extraThresholdMb` are grouped under **Extras** at the bottom of the library. The default cutoff is 800 MB.
 
+The clip controls use `http://100.98.83.82:8765` and treat `/home/koushik/Downloads` as the media root by default. Override these with `CLIP_API_URL` and `CLIP_MEDIA_ROOT` if StopAndGo or the Downloads directory moves.
+
 Then start the app:
 
 ```bash
 npm start
 ```
 
-The library is rescanned whenever the page loads. `scanIntervalMs` also keeps it fresh while the server stays running. `PORT`, `SCAN_INTERVAL_MS`, `EXTRA_THRESHOLD_MB`, and `MEDIA_DIRS` are available as optional environment-variable overrides.
+The library is rescanned whenever the page loads. `scanIntervalMs` also keeps it fresh while the server stays running. `PORT`, `SCAN_INTERVAL_MS`, `EXTRA_THRESHOLD_MB`, `MEDIA_DIRS`, `CLIP_API_URL`, and `CLIP_MEDIA_ROOT` are available as optional environment-variable overrides.
 
 ## Open it on the iPad
 

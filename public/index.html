@@ -10,7 +10,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="stylesheet" href="/styles.css?v=9" />
+    <link rel="stylesheet" href="/styles.css?v=10" />
     <title>Media</title>
   </head>
   <body>
@@ -54,6 +54,12 @@
             <label>Volume <input id="volume" type="range" min="0" max="1" value="1" step="0.05" /></label>
           </div>
         </section>
+        <section class="clip-controls" aria-label="Create a clip">
+          <label>Last <input id="clipDuration" type="number" min="1" max="60" step="1" value="15" inputmode="numeric" /> seconds</label>
+          <button id="clipButton" type="button">Create clip</button>
+          <span id="clipStatus" role="status"></span>
+          <a id="clipLink" target="_blank" rel="noreferrer" hidden>Open clip</a>
+        </section>
       </div>
     </main>
 
@@ -67,6 +73,6 @@
       </article>
     </template>
 
-    <script type="module" src="/app.js?v=9"></script>
+    <script type="module" src="/app.js?v=10"></script>
   </body>
 </html>
