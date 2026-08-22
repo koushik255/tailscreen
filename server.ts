@@ -3,10 +3,12 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { clipMediaPath, clipServiceUrl } from "./lib/clips.js";
 import { loadConfig } from "./lib/config.js";
 import { type MediaItem, publicMediaItem, scanMedia } from "./lib/media-library.js";
+import { createCompatibleWindow, parseTranscodeWindow } from "./lib/server-transcode.js";
 import {
   extractEmbeddedSubtitleTrack,
   type EmbeddedSubtitleTrack,
@@ -101,6 +103,39 @@ app.get("/api/media/:id/stream", async (request, response, next) => {
     return createReadStream(item.path, { start, end }).pipe(response);
   } catch (error) {
     next(error);
+  }
+});
+
+app.get("/api/media/:id/compatible", async (request, response, next) => {
+  const item = mediaById.get(request.params.id);
+  if (!item) return response.status(404).json({ error: "Media item not found" });
+
+  let window;
+  try {
+    window = parseTranscodeWindow(request.query.start, request.query.duration);
+  } catch (error) {
+    return response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+
+  let compatible: Awaited<ReturnType<typeof createCompatibleWindow>> | null = null;
+  try {
+    const target = Writable.toWeb(response) as WritableStream<Uint8Array>;
+    compatible = await createCompatibleWindow(item.path, target, window);
+    response.setHeader("Content-Type", compatible.mimeType);
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+
+    const cancel = () => {
+      if (!response.writableEnded) void compatible?.cancel();
+    };
+    response.once("close", cancel);
+    await compatible.execute();
+    response.off("close", cancel);
+  } catch (error) {
+    if (!response.headersSent) next(error);
+    else response.destroy(error instanceof Error ? error : undefined);
+  } finally {
+    compatible?.dispose();
   }
 });
 

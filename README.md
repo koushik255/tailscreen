@@ -4,16 +4,16 @@ TailScreen is a small, installable web app for browsing videos on a server from 
 
 - search the server's video library;
 - play browser-supported video directly; and
-- fall back to client-side Mediabunny playback for other containers and codecs;
+- fall back to Mediabunny playback for other containers and codecs;
 - automatically show text subtitles embedded in MKV files; and
 - load a local SRT, ASS, or SSA file with the **Add subtitles** button; and
 - create a 1–60 second MP4 clip ending at the current playback position through StopAndGo.
 
-The compatibility player decodes video progressively and sends decoded audio through Web Audio. AC-3, DTS, and ProRes fallback decoders are included. For HEVC in an unsupported container such as MKV, it progressively remuxes the video to fragmented MP4 and converts the audio to AAC. It does not download an entire multi-gigabyte movie into memory before playback.
+The compatibility player decodes supported video progressively and sends decoded audio through Web Audio. AC-3, DTS, and ProRes fallback decoders are included. If Safari cannot decode the video, TailScreen uses `@mediabunny/server` to stream a 1080p H.264/AAC MP4 window. This covers AV1 and HEVC on iPads that do not expose those codecs through WebCodecs.
 
 When an MKV contains text subtitles, TailScreen automatically chooses an English track when available, or the first subtitle track otherwise. Captions use a custom Arial overlay. Files selected with **Add subtitles** are read only by the browser and are not uploaded to the server.
 
-Seekable AV1 playback uses Mediabunny with the browser's WebCodecs decoder, so the site must be opened over HTTPS and the device must support the movie's AV1 profile. TailScreen does not use the forward-only MP4 remux fallback for AV1. If the player reports that HTTPS is required, enable the tailnet-only HTTPS address with `tailscale serve --bg 8787` and open the URL it prints.
+The server fallback converts only the next two minutes. Clicking anywhere on TailScreen's global timeline cancels the old request and begins a new conversion at that movie timestamp, so random seeking does not require converting the entire movie first. Each window is streamed as fragmented MP4 and the next window begins automatically.
 
 No cloud service or public port is required. This first version intentionally relies on your Tailscale network and ACLs as the access boundary.
 
@@ -64,10 +64,10 @@ The library is rescanned whenever the page loads. `scanIntervalMs` also keeps it
 If Safari refuses to install service-worker features over plain HTTP, use Tailscale Serve to provide tailnet-only HTTPS:
 
 ```bash
-tailscale serve --bg 8787
+sudo tailscale serve --bg --https=8443 http://127.0.0.1:8787
 ```
 
-Then open the HTTPS URL printed by Tailscale. Plain tailnet HTTP works for basic browsing, but HTTPS is recommended because browser media APIs and installable-PWA features can require a secure context.
+Then open the HTTPS URL printed by Tailscale, such as `https://SERVER_NAME:8443/`. Using a separate HTTPS port leaves an existing service on the default Tailscale Serve address untouched. Plain tailnet HTTP works for basic browsing, but HTTPS is recommended because browser media APIs and installable-PWA features can require a secure context.
 
 ## Security
 

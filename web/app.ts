@@ -1,7 +1,7 @@
 import {
   canPlayNatively,
   CompatibilityPlayer,
-  StreamingConversionPlayer,
+  ServerConversionPlayer,
   UnsupportedVideoError,
 } from "./mediabunny-player.js";
 import { SubtitleController } from "./subtitles.js";
@@ -51,7 +51,7 @@ const clipLink = element<HTMLAnchorElement>("#clipLink");
 
 let library: MediaItem[] = [];
 let openRequest = 0;
-let nativeMode: "none" | "direct" | "converted" = "none";
+let nativeMode: "none" | "direct" | "server" = "none";
 let activeMediaId: string | null = null;
 let libraryScrollY = 0;
 let clipRequest: AbortController | null = null;
@@ -67,11 +67,17 @@ const player = new CompatibilityPlayer(canvas, {
     subtitles.update(current);
   },
 });
-const convertedPlayer = new StreamingConversionPlayer(
+const serverPlayer = new ServerConversionPlayer(
   nativeVideo,
-  (message) => {
-    compatibility.hidden = false;
-    status.textContent = message;
+  {
+    onError: (message) => { status.textContent = message; },
+    onPlayingChange: (playing) => { playButton.textContent = playing ? "Pause" : "Play"; },
+    onTimeChange: (current, duration) => {
+      seek.max = String(duration);
+      if (!seek.matches(":active")) seek.value = String(current);
+      time.textContent = `${formatTime(current)} / ${formatTime(duration)}`;
+      subtitles.update(current);
+    },
   },
   (message) => { status.textContent = message; },
 );
@@ -100,7 +106,7 @@ function stopPlayback(): void {
   clipRequest?.abort();
   clipRequest = null;
   nativeMode = "none";
-  convertedPlayer.destroy();
+  serverPlayer.destroy();
   nativeVideo.pause();
   nativeVideo.removeAttribute("src");
   nativeVideo.load();
@@ -130,25 +136,7 @@ function backToLibrary(): void {
   else showLibrary();
 }
 
-function showAv1Requirement(secureContext: boolean): void {
-  player.destroy();
-  nativeVideo.hidden = true;
-  canvas.hidden = true;
-  compatibility.hidden = false;
-  playerControls.hidden = true;
-  if (secureContext) {
-    status.textContent = "This device does not provide an AV1 WebCodecs decoder.";
-    return;
-  }
-
-  const secureUrl = `https://${location.hostname}${location.pathname}${location.search}${location.hash}`;
-  const link = document.createElement("a");
-  link.href = secureUrl;
-  link.textContent = "Open the secure player";
-  status.replaceChildren("Seekable AV1 playback requires HTTPS. ", link, ".");
-}
-
-async function useCompatibilityPlayer(url: string, request: number): Promise<void> {
+async function useCompatibilityPlayer(url: string, mediaId: string, request: number): Promise<void> {
   nativeVideo.pause();
   nativeVideo.removeAttribute("src");
   nativeVideo.load();
@@ -164,33 +152,29 @@ async function useCompatibilityPlayer(url: string, request: number): Promise<voi
     playButton.disabled = false;
   } catch (error) {
     if (error instanceof UnsupportedVideoError && request === openRequest) {
-      if (error.codec === "av1") {
-        showAv1Requirement(isSecureContext);
-        return;
-      }
-      await useConvertedPlayer(url, request);
+      await useServerPlayer(mediaId, error.duration, request);
       return;
     }
     status.textContent = error instanceof Error ? error.message : String(error);
   }
 }
 
-async function useConvertedPlayer(url: string, request: number): Promise<void> {
+async function useServerPlayer(mediaId: string, duration: number, request: number): Promise<void> {
   player.destroy();
   compatibility.hidden = false;
   canvas.hidden = true;
-  playerControls.hidden = true;
-  nativeVideo.hidden = true;
-  status.textContent = "Converting the container and audio for browser playback…";
+  playerControls.hidden = false;
+  nativeVideo.hidden = false;
+  nativeVideo.controls = false;
+  playButton.disabled = false;
+  status.textContent = "Starting server-compatible playback…";
   try {
-    nativeMode = "converted";
-    await convertedPlayer.load(url);
+    nativeMode = "server";
+    await serverPlayer.load(mediaId, duration);
     if (request !== openRequest) return;
-    compatibility.hidden = true;
-    nativeVideo.hidden = false;
-    await nativeVideo.play().catch(() => undefined);
   } catch (error) {
-    convertedPlayer.destroy();
+    if (request !== openRequest) return;
+    serverPlayer.destroy();
     nativeMode = "none";
     compatibility.hidden = false;
     status.textContent = error instanceof Error ? error.message : String(error);
@@ -219,18 +203,20 @@ async function openPlayer(item: MediaItem, pushHistory = true): Promise<void> {
       if (request !== openRequest) return;
       compatibility.hidden = true;
       nativeVideo.hidden = false;
+      nativeVideo.controls = true;
       nativeMode = "direct";
       nativeVideo.src = url;
       await nativeVideo.play().catch(() => undefined);
     } else {
-      await useCompatibilityPlayer(url, request);
+      await useCompatibilityPlayer(url, item.id, request);
     }
   } catch {
-    if (request === openRequest) await useCompatibilityPlayer(url, request);
+    if (request === openRequest) await useCompatibilityPlayer(url, item.id, request);
   }
 }
 
 function currentPlaybackTime(): number {
+  if (nativeMode === "server") return serverPlayer.currentTime;
   return nativeMode === "none" ? Number(seek.value) : nativeVideo.currentTime;
 }
 
@@ -351,17 +337,29 @@ search.addEventListener("input", render);
 element<HTMLButtonElement>("#closePlayer").addEventListener("click", backToLibrary);
 nativeVideo.addEventListener("error", () => {
   if (!playerView.hidden && nativeMode === "direct" && nativeVideo.src) {
-    void useCompatibilityPlayer(nativeVideo.src, openRequest);
+    const mediaId = activeMediaId;
+    if (mediaId) void useCompatibilityPlayer(nativeVideo.src, mediaId, openRequest);
   }
 });
 playButton.addEventListener("click", () => {
-  if (player.isPlaying) player.pause();
-  else void player.play().catch((error: unknown) => { status.textContent = String(error); });
+  const activePlayer = nativeMode === "server" ? serverPlayer : player;
+  if (activePlayer.isPlaying) activePlayer.pause();
+  else void activePlayer.play().catch((error: unknown) => { status.textContent = String(error); });
 });
-seek.addEventListener("change", () => void player.seek(Number(seek.value)));
-volume.addEventListener("input", () => player.setVolume(Number(volume.value)));
-nativeVideo.addEventListener("timeupdate", () => subtitles.update(nativeVideo.currentTime));
-nativeVideo.addEventListener("seeking", () => subtitles.update(nativeVideo.currentTime));
+seek.addEventListener("change", () => {
+  const activePlayer = nativeMode === "server" ? serverPlayer : player;
+  void activePlayer.seek(Number(seek.value)).catch((error: unknown) => { status.textContent = String(error); });
+});
+volume.addEventListener("input", () => {
+  const activePlayer = nativeMode === "server" ? serverPlayer : player;
+  activePlayer.setVolume(Number(volume.value));
+});
+nativeVideo.addEventListener("timeupdate", () => {
+  if (nativeMode === "direct") subtitles.update(nativeVideo.currentTime);
+});
+nativeVideo.addEventListener("seeking", () => {
+  if (nativeMode === "direct") subtitles.update(nativeVideo.currentTime);
+});
 subtitleButton.addEventListener("click", () => subtitleFile.click());
 subtitleFile.addEventListener("change", () => {
   const file = subtitleFile.files?.[0];

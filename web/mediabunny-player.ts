@@ -4,13 +4,9 @@ import { registerDtsDecoder } from "@mediabunny/dts";
 import { registerProresDecoder } from "@mediabunny/prores";
 import {
   ALL_FORMATS,
-  AppendOnlyStreamTarget,
   AudioBufferSink,
   CanvasSink,
-  Conversion,
   Input,
-  Mp4OutputFormat,
-  Output,
   UrlSource,
   type InputTrack,
   type WrappedAudioBuffer,
@@ -23,7 +19,7 @@ registerDtsDecoder();
 registerProresDecoder();
 
 export class UnsupportedVideoError extends Error {
-  constructor(readonly codec: string | null) {
+  constructor(readonly codec: string | null, readonly duration: number) {
     super(`The browser cannot decode the ${codec ?? "unknown"} video track.`);
   }
 }
@@ -89,7 +85,7 @@ export class CompatibilityPlayer {
     const videoCodec = await videoTrack?.getCodec() ?? null;
     if (videoTrack && (videoCodec === "hevc" || !videoCodec || !(await videoTrack.canDecode()))) {
       this.destroy();
-      throw new UnsupportedVideoError(videoCodec);
+      throw new UnsupportedVideoError(videoCodec, this.duration);
     }
     if (audioTrack && (!(await audioTrack.getCodec()) || !(await audioTrack.canDecode()))) audioTrack = null;
     if (!videoTrack && !audioTrack) throw new Error("This browser cannot decode this file's audio or video.");
@@ -268,187 +264,123 @@ export class CompatibilityPlayer {
   }
 }
 
-export class StreamingConversionPlayer {
-  private static readonly maxBufferedAhead = 12;
-  private input: Input | null = null;
-  private conversion: Conversion | null = null;
-  private mediaSource: MediaSource | null = null;
-  private sourceBuffer: SourceBuffer | null = null;
-  private sourceBufferReady = Promise.resolve();
-  private resolveSourceBuffer: (() => void) | null = null;
-  private firstAppendReady = Promise.resolve();
-  private resolveFirstAppend: (() => void) | null = null;
-  private objectUrl: string | null = null;
-  private stopped = false;
+export class ServerConversionPlayer {
+  private static readonly windowDuration = 120;
+  private mediaId: string | null = null;
+  private duration = 0;
+  private windowStart = 0;
+  private current = 0;
+  private active = false;
+  private wantsToPlay = false;
+  private loadId = 0;
 
   constructor(
     private readonly video: HTMLVideoElement,
-    private readonly onError: (message: string) => void,
+    private readonly events: PlayerEvents,
     private readonly onStatus: (message: string) => void,
-  ) {}
-
-  async load(url: string): Promise<void> {
-    this.destroy();
-    this.stopped = false;
-    if (!("MediaSource" in window)) throw new Error("This browser cannot stream converted video.");
-
-    this.mediaSource = new MediaSource();
-    this.objectUrl = URL.createObjectURL(this.mediaSource);
-    this.video.src = this.objectUrl;
-    await this.waitForMediaSource();
-    this.onStatus("Reading the media tracks…");
-    this.sourceBufferReady = new Promise((resolve) => { this.resolveSourceBuffer = resolve; });
-    this.firstAppendReady = new Promise((resolve) => { this.resolveFirstAppend = resolve; });
-
-    const writable = new WritableStream<Uint8Array>({
-      write: (chunk) => this.append(chunk),
+  ) {
+    video.addEventListener("timeupdate", () => {
+      if (!this.active) return;
+      this.current = Math.min(this.windowStart + video.currentTime, this.duration);
+      this.events.onTimeChange(this.current, this.duration);
     });
-    this.input = new Input({ source: new UrlSource(url), formats: ALL_FORMATS });
-    const output = new Output({
-      format: new Mp4OutputFormat({ fastStart: "fragmented", minimumFragmentDuration: 1 }),
-      target: new AppendOnlyStreamTarget(writable),
+    video.addEventListener("play", () => {
+      if (this.active) this.events.onPlayingChange(true);
     });
-    this.conversion = await Conversion.init({
-      input: this.input,
-      output,
-      tracks: "primary",
-      video: async (track) => {
-        const codec = await track.getCodec();
-        return codec ? { codec } : { discard: true };
-      },
-      audio: { codec: "aac", numberOfChannels: 2 },
-      showWarnings: false,
+    video.addEventListener("pause", () => {
+      if (this.active) this.events.onPlayingChange(false);
     });
-    if (!this.conversion.isValid) throw new Error("This file cannot be converted for browser playback.");
-
-    this.conversion.onProgress = (progress) => {
-      this.onStatus(`Buffering converted playback… ${Math.round(progress * 100)}%`);
-    };
-    const execution = this.conversion.execute().then(async () => {
-      if (!this.stopped && this.mediaSource?.readyState === "open") {
-        await this.waitUntilIdle();
-        this.mediaSource.endOfStream();
+    video.addEventListener("ended", () => {
+      if (!this.active) return;
+      const next = Math.min(this.windowStart + Math.max(video.currentTime, 1), this.duration);
+      this.current = next;
+      if (next < this.duration - 0.1) void this.loadWindow(next, true);
+      else this.events.onPlayingChange(false);
+    });
+    video.addEventListener("error", () => {
+      if (this.active && video.error?.code !== MediaError.MEDIA_ERR_ABORTED) {
+        this.events.onError("The server-converted video could not be played.");
       }
     });
-    void execution.catch((error: unknown) => {
-      if (!this.stopped) this.onError(error instanceof Error ? error.message : String(error));
-    });
+  }
 
-    this.onStatus("Opening the converted stream…");
-    const mimeType = await output.getMimeType();
-    if (!MediaSource.isTypeSupported(mimeType)) {
-      throw new Error(`This browser cannot play the converted stream (${mimeType}).`);
-    }
-    this.sourceBuffer = this.mediaSource.addSourceBuffer(mimeType);
-    this.resolveSourceBuffer?.();
-    this.resolveSourceBuffer = null;
-    await Promise.race([this.waitUntilPlayable(), this.waitUntilBuffered(), this.firstAppendReady, execution]);
+  get isPlaying(): boolean { return this.active && !this.video.paused; }
+  get currentTime(): number { return this.current; }
+
+  async load(mediaId: string, duration: number): Promise<void> {
+    this.destroy();
+    this.mediaId = mediaId;
+    this.duration = duration;
+    this.active = true;
+    this.video.controls = false;
+    this.video.hidden = false;
+    this.events.onTimeChange(0, duration);
+    await this.loadWindow(0, true);
   }
 
   destroy(): void {
-    this.stopped = true;
-    void this.conversion?.cancel();
-    this.conversion = null;
-    this.input?.dispose();
-    this.input = null;
-    this.resolveSourceBuffer?.();
-    this.resolveSourceBuffer = null;
-    this.resolveFirstAppend?.();
-    this.resolveFirstAppend = null;
-    this.sourceBuffer = null;
-    this.mediaSource = null;
-    if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
-    this.objectUrl = null;
+    this.loadId++;
+    this.active = false;
+    this.wantsToPlay = false;
+    this.mediaId = null;
+    this.video.pause();
+    this.video.removeAttribute("src");
+    this.video.load();
   }
 
-  private waitForMediaSource(): Promise<void> {
-    if (this.mediaSource?.readyState === "open") return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      this.mediaSource?.addEventListener("sourceopen", () => resolve(), { once: true });
-      this.mediaSource?.addEventListener("sourceclose", () => reject(new Error("Converted stream was closed.")), { once: true });
-    });
+  async play(): Promise<void> {
+    this.wantsToPlay = true;
+    await this.video.play();
   }
 
-  private waitUntilPlayable(): Promise<void> {
-    if (this.video.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const timeout = window.setTimeout(() => reject(new Error("Converted video took too long to start.")), 30000);
-      this.video.addEventListener("canplay", () => { clearTimeout(timeout); resolve(); }, { once: true });
-      this.video.addEventListener("error", () => { clearTimeout(timeout); reject(new Error("Converted video could not be played.")); }, { once: true });
-    });
+  pause(): void {
+    this.wantsToPlay = false;
+    this.video.pause();
   }
 
-  private waitUntilBuffered(): Promise<void> {
-    const sourceBuffer = this.sourceBuffer;
-    if (!sourceBuffer) return Promise.reject(new Error("Converted stream was not initialized."));
-    if (sourceBuffer.buffered.length) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      const check = () => {
-        if (sourceBuffer.buffered.length) {
-          sourceBuffer.removeEventListener("updateend", check);
-          resolve();
-        }
+  async seek(seconds: number): Promise<void> {
+    this.current = Math.min(Math.max(seconds, 0), this.duration);
+    this.events.onTimeChange(this.current, this.duration);
+    await this.loadWindow(this.current, this.wantsToPlay);
+  }
+
+  setVolume(volume: number): void {
+    this.video.volume = Math.max(0, Math.min(volume, 1));
+  }
+
+  private async loadWindow(start: number, autoplay: boolean): Promise<void> {
+    if (!this.mediaId || start >= this.duration) return;
+    const loadId = ++this.loadId;
+    this.wantsToPlay = autoplay;
+    this.windowStart = start;
+    this.current = start;
+    this.onStatus(`Converting from ${formatPlayerTime(start)} on the server…`);
+    this.video.pause();
+    const duration = Math.min(ServerConversionPlayer.windowDuration, this.duration - start);
+    this.video.src = `/api/media/${encodeURIComponent(this.mediaId)}/compatible?start=${start}&duration=${duration}`;
+    this.video.load();
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => finish(new Error("Server conversion took too long to start.")), 60_000);
+      const ready = () => finish();
+      const failed = () => finish(new Error("The server could not create compatible playback."));
+      const finish = (error?: Error) => {
+        clearTimeout(timeout);
+        this.video.removeEventListener("canplay", ready);
+        this.video.removeEventListener("error", failed);
+        if (error && loadId === this.loadId && this.active) reject(error);
+        else resolve();
       };
-      sourceBuffer.addEventListener("updateend", check);
-      sourceBuffer.addEventListener("error", () => reject(new Error("Could not buffer converted video.")), { once: true });
+      this.video.addEventListener("canplay", ready, { once: true });
+      this.video.addEventListener("error", failed, { once: true });
     });
+    if (loadId !== this.loadId || !this.active) return;
+    this.onStatus("Server-compatible playback is ready.");
+    if (autoplay) await this.video.play().catch(() => undefined);
   }
+}
 
-  private async append(chunk: Uint8Array): Promise<void> {
-    await this.sourceBufferReady;
-    const sourceBuffer = this.sourceBuffer;
-    if (!sourceBuffer || this.stopped) throw new Error("Converted stream was stopped.");
-    await this.waitUntilIdle();
-
-    while (!this.stopped && this.bufferedAhead() > StreamingConversionPlayer.maxBufferedAhead) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    if (this.stopped) throw new Error("Converted stream was stopped.");
-
-    if (this.video.currentTime > 30 && sourceBuffer.buffered.length) {
-      const removeBefore = this.video.currentTime - 30;
-      if (sourceBuffer.buffered.start(0) < removeBefore) {
-        sourceBuffer.remove(0, removeBefore);
-        await this.waitUntilIdle();
-      }
-    }
-    while (!this.stopped) {
-      try {
-        sourceBuffer.appendBuffer(new Uint8Array(chunk).buffer);
-        await this.waitUntilIdle();
-        this.resolveFirstAppend?.();
-        this.resolveFirstAppend = null;
-        return;
-      } catch (error) {
-        if (!(error instanceof DOMException) || error.name !== "QuotaExceededError") throw error;
-        await this.removeOldBuffer();
-        await new Promise((resolve) => setTimeout(resolve, 250));
-      }
-    }
-  }
-
-  private async removeOldBuffer(): Promise<void> {
-    const sourceBuffer = this.sourceBuffer;
-    if (!sourceBuffer?.buffered.length || this.video.currentTime <= 10) return;
-    const removeBefore = this.video.currentTime - 10;
-    if (sourceBuffer.buffered.start(0) < removeBefore) {
-      sourceBuffer.remove(0, removeBefore);
-      await this.waitUntilIdle();
-    }
-  }
-
-  private bufferedAhead(): number {
-    const ranges = this.sourceBuffer?.buffered;
-    if (!ranges?.length) return 0;
-    return Math.max(ranges.end(ranges.length - 1) - this.video.currentTime, 0);
-  }
-
-  private waitUntilIdle(): Promise<void> {
-    const sourceBuffer = this.sourceBuffer;
-    if (!sourceBuffer?.updating) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      sourceBuffer.addEventListener("updateend", () => resolve(), { once: true });
-      sourceBuffer.addEventListener("error", () => reject(new Error("Could not buffer converted video.")), { once: true });
-    });
-  }
+function formatPlayerTime(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${Math.floor(seconds % 60).toString().padStart(2, "0")}`;
 }
