@@ -14,7 +14,7 @@ button {
 button:active { background: #e8e8e8; }
 button:disabled { opacity: .5; }
 
-main {
+.library-view {
   width: min(100% - 28px, 900px);
   margin: auto;
   padding: max(16px, env(safe-area-inset-top)) 0 max(24px, env(safe-area-inset-bottom));
@@ -42,12 +42,24 @@ main {
 .empty-state p { margin: 0; font-size: 13px; }
 .hidden, [hidden] { display: none !important; }
 
-dialog { width: min(96vw, 1000px); padding: 0; border: 1px solid #888; border-radius: 4px; }
-dialog::backdrop { background: rgb(0 0 0 / 75%); }
-.player-header, .player-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.player-header { padding: 8px; font-size: 13px; }
+.player-view { min-height: 100dvh; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+.player-header, .player-heading, .player-actions { display: flex; align-items: center; gap: 8px; }
+.player-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  justify-content: space-between;
+  min-height: 49px;
+  padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
+  border-bottom: 1px solid #ddd;
+  background: #fff;
+  font-size: 13px;
+}
+.player-heading { min-width: 0; }
+#playerTitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-content { width: min(100%, 1200px); margin: auto; }
 .player-surface { position: relative; }
-#nativePlayer, #playerCanvas { display: block; width: 100%; max-height: 78vh; background: #000; }
+#nativePlayer, #playerCanvas { display: block; width: 100%; max-height: calc(100dvh - 96px); background: #000; }
 .subtitle-overlay {
   position: absolute;
   right: 5%;
@@ -77,6 +89,8 @@ dialog::backdrop { background: rgb(0 0 0 / 75%); }
 
 @media (max-width: 600px) {
   .media-card { align-items: flex-start; }
+  .player-header { align-items: flex-start; }
+  .player-heading { flex: 1; }
   .player-controls { flex-wrap: wrap; }
   #seek { order: 3; flex-basis: 100%; }
 }

@@ -29,7 +29,8 @@ const emptyState = element<HTMLElement>("#emptyState");
 const emptyMessage = element<HTMLElement>("#emptyMessage");
 const count = element<HTMLElement>("#libraryCount");
 const search = element<HTMLInputElement>("#searchInput");
-const dialog = element<HTMLDialogElement>("#playerDialog");
+const libraryView = element<HTMLElement>("#libraryView");
+const playerView = element<HTMLElement>("#playerView");
 const title = element<HTMLElement>("#playerTitle");
 const nativeVideo = element<HTMLVideoElement>("#nativePlayer");
 const compatibility = element<HTMLElement>("#compatibilityPlayer");
@@ -47,6 +48,8 @@ const subtitleFile = element<HTMLInputElement>("#subtitleFile");
 let library: MediaItem[] = [];
 let openRequest = 0;
 let nativeMode: "none" | "direct" | "converted" = "none";
+let activeMediaId: string | null = null;
+let libraryScrollY = 0;
 const subtitles = new SubtitleController(subtitleOverlay, subtitleButton);
 
 const player = new CompatibilityPlayer(canvas, {
@@ -87,7 +90,7 @@ async function api<T>(path: string): Promise<T> {
   return payload as T;
 }
 
-function closePlayer(): void {
+function stopPlayback(): void {
   openRequest++;
   nativeMode = "none";
   convertedPlayer.destroy();
@@ -96,6 +99,21 @@ function closePlayer(): void {
   nativeVideo.load();
   player.destroy();
   subtitles.clear();
+}
+
+function showLibrary(): void {
+  stopPlayback();
+  activeMediaId = null;
+  playerView.hidden = true;
+  libraryView.hidden = false;
+  document.title = "Media";
+  requestAnimationFrame(() => window.scrollTo(0, libraryScrollY));
+}
+
+function backToLibrary(): void {
+  const state = history.state as { mediaId?: unknown } | null;
+  if (activeMediaId && state?.mediaId === activeMediaId) history.back();
+  else showLibrary();
 }
 
 async function useCompatibilityPlayer(url: string, request: number): Promise<void> {
@@ -143,15 +161,21 @@ async function useConvertedPlayer(url: string, request: number): Promise<void> {
   }
 }
 
-async function openPlayer(item: MediaItem): Promise<void> {
-  closePlayer();
+async function openPlayer(item: MediaItem, pushHistory = true): Promise<void> {
+  if (!libraryView.hidden) libraryScrollY = window.scrollY;
+  stopPlayback();
   const request = ++openRequest;
   const url = `/api/media/${item.id}/stream`;
+  activeMediaId = item.id;
   title.textContent = item.title;
+  document.title = item.title;
+  libraryView.hidden = true;
+  playerView.hidden = false;
+  window.scrollTo(0, 0);
+  if (pushHistory) history.pushState({ mediaId: item.id }, "", `#watch=${encodeURIComponent(item.id)}`);
   nativeVideo.hidden = true;
   compatibility.hidden = false;
   status.textContent = "Checking browser support…";
-  dialog.showModal();
   void subtitles.loadEmbedded(item.id);
 
   try {
@@ -208,6 +232,13 @@ async function loadLibrary(): Promise<void> {
     const payload = await api<{ items: MediaItem[] }>("/api/media");
     library = payload.items;
     render();
+    const mediaId = (history.state as { mediaId?: unknown } | null)?.mediaId;
+    const item = typeof mediaId === "string" ? library.find((entry) => entry.id === mediaId) : undefined;
+    if (item) void openPlayer(item, false);
+    else if (mediaId) {
+      history.replaceState({ mediaId: null }, "", `${location.pathname}${location.search}`);
+      showLibrary();
+    }
   } catch (error) {
     count.textContent = "Offline";
     emptyState.classList.remove("hidden");
@@ -216,10 +247,9 @@ async function loadLibrary(): Promise<void> {
 }
 
 search.addEventListener("input", render);
-element<HTMLButtonElement>("#closePlayer").addEventListener("click", () => dialog.close());
-dialog.addEventListener("close", closePlayer);
+element<HTMLButtonElement>("#closePlayer").addEventListener("click", backToLibrary);
 nativeVideo.addEventListener("error", () => {
-  if (dialog.open && nativeMode === "direct" && nativeVideo.src) {
+  if (!playerView.hidden && nativeMode === "direct" && nativeVideo.src) {
     void useCompatibilityPlayer(nativeVideo.src, openRequest);
   }
 });
@@ -237,6 +267,23 @@ subtitleFile.addEventListener("change", () => {
   if (file) void subtitles.loadFile(file);
   subtitleFile.value = "";
 });
+
+window.addEventListener("popstate", (event) => {
+  const mediaId = (event.state as { mediaId?: unknown } | null)?.mediaId;
+  const item = typeof mediaId === "string" ? library.find((entry) => entry.id === mediaId) : undefined;
+  if (item) void openPlayer(item, false);
+  else showLibrary();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !playerView.hidden) backToLibrary();
+});
+
+const initialHashId = new URLSearchParams(location.hash.slice(1)).get("watch");
+const savedMediaId = (history.state as { mediaId?: unknown } | null)?.mediaId;
+if (typeof savedMediaId !== "string") {
+  history.replaceState({ mediaId: null }, "", `${location.pathname}${location.search}`);
+  if (initialHashId) history.pushState({ mediaId: initialHashId }, "", `#watch=${encodeURIComponent(initialHashId)}`);
+}
 
 if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/service-worker.js");
 void loadLibrary();
