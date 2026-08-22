@@ -56,14 +56,15 @@ async function launch(item, button) {
 function render() {
   const query = search.value.trim().toLocaleLowerCase();
   const filtered = library.filter((item) =>
-    `${item.title} ${item.folder} ${item.extension}`.toLocaleLowerCase().includes(query),
+    `${item.title} ${item.library} ${item.folder} ${item.extension}`.toLocaleLowerCase().includes(query),
   );
 
   grid.replaceChildren();
   for (const item of filtered) {
     const card = template.content.firstElementChild.cloneNode(true);
     card.querySelector(".media-title-text").textContent = item.title;
-    card.querySelector(".media-meta").textContent = `${item.folder} · ${formatBytes(item.size)}`;
+    const location = [item.library, item.folder].filter(Boolean).join(" / ");
+    card.querySelector(".media-meta").textContent = `${location} · ${formatBytes(item.size)}`;
     card.querySelector(".format-badge").textContent = item.extension;
     card.querySelectorAll('[data-action="play-here"]').forEach((button) => {
       button.setAttribute("aria-label", `Play ${item.title} here`);
@@ -79,7 +80,7 @@ function render() {
   emptyState.classList.toggle("hidden", filtered.length !== 0);
   emptyMessage.textContent = library.length
     ? "No titles match your search."
-    : "Set MEDIA_DIRS on the server, then rescan the library.";
+    : "Add a library to config.json on the server, then rescan.";
 }
 
 async function loadLibrary() {

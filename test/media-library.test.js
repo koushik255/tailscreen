@@ -21,9 +21,20 @@ test("scanMedia recursively finds supported videos", async () => {
   await writeFile(path.join(root, "Sci Fi", "Arrival.mkv"), "video");
   await writeFile(path.join(root, "notes.txt"), "not media");
 
-  const items = await scanMedia([root]);
+  const items = await scanMedia([{ name: "Films", path: root }]);
   assert.equal(items.length, 1);
   assert.equal(items[0].title, "Arrival");
+  assert.equal(items[0].library, "Films");
   assert.equal(items[0].folder, "Sci Fi");
   assert.equal(items[0].extension, "MKV");
+});
+
+test("scanMedia reports an inaccessible library path", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tailscreen-missing-test-"));
+  const missingPath = path.join(root, "does-not-exist");
+
+  await assert.rejects(
+    scanMedia([{ name: "Missing", path: missingPath }]),
+    /Cannot access library "Missing"/,
+  );
 });

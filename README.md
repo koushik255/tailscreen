@@ -14,33 +14,48 @@ Requirements: Node.js 20+ and Tailscale installed on both devices.
 
 ```bash
 npm install
-cp .env.example .env
+cp config.example.json config.json
 ```
 
-Edit `.env`, then load it and start the app:
+Edit `config.json` and set the absolute paths used on this server:
+
+```json
+{
+  "port": 8787,
+  "scanIntervalMs": 30000,
+  "libraries": [
+    { "name": "Movies", "path": "/srv/media/Movies" },
+    { "name": "TV Shows", "path": "/srv/media/TV Shows" }
+  ]
+}
+```
+
+`config.json` is ignored by Git, so every server can have different paths without creating Git conflicts or publishing its filesystem layout.
+All paths must be absolute, readable directories. Restart TailScreen after changing `config.json`.
+
+Then start the app:
 
 ```bash
-set -a
-source .env
-set +a
 npm start
 ```
 
-For multiple folders, use your operating system's path separator:
+The default launcher is `open` on macOS and `xdg-open` on Linux. To use a specific player, add a `player` section to `config.json`:
 
-```dotenv
-# macOS/Linux
-MEDIA_DIRS=/Volumes/Media/Movies:/Volumes/Media/Home Videos
+```json
+{
+  "port": 8787,
+  "scanIntervalMs": 30000,
+  "libraries": [
+    { "name": "Movies", "path": "/srv/media/Movies" }
+  ],
+  "player": {
+    "command": "/usr/bin/mpv",
+    "args": ["--fullscreen", "{file}"]
+  }
+}
 ```
 
-The default launcher is `open` on macOS and `xdg-open` on Linux. To force VLC, for example:
-
-```dotenv
-PLAYER_COMMAND=/Applications/VLC.app/Contents/MacOS/VLC
-PLAYER_ARGS_JSON=["--fullscreen","{file}"]
-```
-
-`PLAYER_ARGS_JSON` is passed directly to the program without a shell. Keep `{file}` where the selected video's absolute path should go.
+The arguments are passed directly to the program without a shell. Keep `{file}` where the selected video's absolute path should go. `PORT`, `SCAN_INTERVAL_MS`, `MEDIA_DIRS`, `PLAYER_COMMAND`, and `PLAYER_ARGS_JSON` remain available as optional environment-variable overrides.
 
 ## Open it on the iPad
 

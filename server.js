@@ -4,17 +4,20 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { loadConfig } from "./lib/config.js";
 import { launchMedia } from "./lib/launcher.js";
 import { publicMediaItem, scanMedia } from "./lib/media-library.js";
 
 const appDirectory = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const port = Number.parseInt(process.env.PORT || "8787", 10);
-const scanInterval = Number.parseInt(process.env.SCAN_INTERVAL_MS || "30000", 10);
-const mediaDirectories = (process.env.MEDIA_DIRS || "")
-  .split(path.delimiter)
-  .map((directory) => directory.trim())
-  .filter(Boolean);
+const config = await loadConfig({ cwd: appDirectory });
+const playerEnvironment = config.player
+  ? {
+      ...process.env,
+      PLAYER_COMMAND: config.player.command,
+      PLAYER_ARGS_JSON: JSON.stringify(config.player.args),
+    }
+  : process.env;
 
 let media = [];
 let mediaById = new Map();
@@ -23,7 +26,7 @@ let scanInFlight = null;
 
 async function refreshLibrary() {
   if (scanInFlight) return scanInFlight;
-  scanInFlight = scanMedia(mediaDirectories)
+  scanInFlight = scanMedia(config.libraries)
     .then((items) => {
       media = items;
       mediaById = new Map(items.map((item) => [item.id, item]));
@@ -48,7 +51,7 @@ app.get("/api/health", (_request, response) => {
   response.json({
     ok: true,
     mediaCount: media.length,
-    directoriesConfigured: mediaDirectories.length,
+    libraries: config.libraries.map((library) => library.name),
     lastScannedAt,
   });
 });
@@ -80,7 +83,7 @@ app.post("/api/media/:id/launch", async (request, response, next) => {
     if (!item) return response.status(404).json({ error: "Media item not found" });
 
     await stat(item.path);
-    launchMedia(item.path);
+    await launchMedia(item.path, { env: playerEnvironment });
     response.status(202).json({ ok: true, title: item.title });
   } catch (error) {
     next(error);
@@ -145,18 +148,19 @@ app.use((error, _request, response, _next) => {
 });
 
 export function startServer() {
-  if (!mediaDirectories.length) {
-    console.warn("No MEDIA_DIRS configured. The library will be empty.");
+  if (!config.libraries.length) {
+    console.warn(`No libraries configured. Copy config.example.json to ${config.configPath} and add media paths.`);
   }
 
   refreshLibrary().catch((error) => console.error("Initial media scan failed:", error));
   const timer = setInterval(() => {
     refreshLibrary().catch((error) => console.error("Media scan failed:", error));
-  }, scanInterval);
+  }, config.scanIntervalMs);
   timer.unref();
 
-  return app.listen(port, "0.0.0.0", () => {
-    console.log(`TailScreen is listening on http://0.0.0.0:${port}`);
+  return app.listen(config.port, "0.0.0.0", () => {
+    console.log(`TailScreen is listening on http://0.0.0.0:${config.port}`);
+    console.log(`Using configuration: ${config.configPath}`);
   });
 }
 
