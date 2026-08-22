@@ -1,8 +1,8 @@
 import { registerMediabunnyServer } from "@mediabunny/server";
 import {
   ALL_FORMATS,
-  AppendOnlyStreamTarget,
   Conversion,
+  FilePathTarget,
   FilePathSource,
   Input,
   Mp4OutputFormat,
@@ -28,13 +28,13 @@ export function parseTranscodeWindow(startValue: unknown, durationValue: unknown
 
 export async function createCompatibleWindow(
   filePath: string,
-  target: WritableStream<Uint8Array>,
+  outputPath: string,
   window: TranscodeWindow,
 ) {
   const input = new Input({ source: new FilePathSource(filePath), formats: ALL_FORMATS });
   const output = new Output({
-    format: new Mp4OutputFormat({ fastStart: "fragmented", minimumFragmentDuration: 1 }),
-    target: new AppendOnlyStreamTarget(target),
+    format: new Mp4OutputFormat({ fastStart: false }),
+    target: new FilePathTarget(outputPath),
   });
 
   try {
@@ -45,8 +45,8 @@ export async function createCompatibleWindow(
       trim: { start: window.start, end: window.start + window.duration },
       video: async (track) => ({
         codec: "avc",
-        height: Math.min(await track.getDisplayHeight(), 1080),
-        quality: new Quality("medium"),
+        height: Math.min(await track.getDisplayHeight(), 720),
+        quality: new Quality("low"),
         keyFrameInterval: 2,
         forceTranscode: true,
       }),
@@ -56,7 +56,6 @@ export async function createCompatibleWindow(
     if (!conversion.isValid) throw new Error("This file has no tracks that can be converted for Safari.");
 
     return {
-      mimeType: "video/mp4",
       execute: () => conversion.execute(),
       cancel: () => conversion.cancel(),
       dispose: () => input.dispose(),

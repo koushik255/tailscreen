@@ -13,7 +13,7 @@ The compatibility player decodes supported video progressively and sends decoded
 
 When an MKV contains text subtitles, TailScreen automatically chooses an English track when available, or the first subtitle track otherwise. Captions use a custom Arial overlay. Files selected with **Add subtitles** are read only by the browser and are not uploaded to the server.
 
-The server fallback converts only the next two minutes. Clicking anywhere on TailScreen's global timeline cancels the old request and begins a new conversion at that movie timestamp, so random seeking does not require converting the entire movie first. Each window is streamed as fragmented MP4 and the next window begins automatically.
+The server fallback converts and caches only the next 30 seconds. Clicking anywhere on TailScreen's global timeline requests a new window at that movie timestamp, so random seeking does not require converting the entire movie first. Each window is served as a byte-range MP4 that Safari can seek within, and the next window begins automatically.
 
 No cloud service or public port is required. This first version intentionally relies on your Tailscale network and ACLs as the access boundary.
 

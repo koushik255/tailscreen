@@ -265,7 +265,7 @@ export class CompatibilityPlayer {
 }
 
 export class ServerConversionPlayer {
-  private static readonly windowDuration = 120;
+  private static readonly windowDuration = 30;
   private mediaId: string | null = null;
   private duration = 0;
   private windowStart = 0;
@@ -361,7 +361,7 @@ export class ServerConversionPlayer {
     this.video.load();
 
     await new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(() => finish(new Error("Server conversion took too long to start.")), 60_000);
+      const timeout = window.setTimeout(() => finish(new Error("Server conversion took too long to start.")), 120_000);
       const ready = () => finish();
       const failed = () => finish(new Error("The server could not create compatible playback."));
       const finish = (error?: Error) => {

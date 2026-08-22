@@ -1,6 +1,8 @@
-import express, { type ErrorRequestHandler, type Response } from "express";
+import { randomUUID } from "node:crypto";
+import express, { type ErrorRequestHandler } from "express";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { mkdir, rename, stat, unlink } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -26,32 +28,33 @@ const subtitleTracks = new Map<string, Promise<EmbeddedSubtitleTrack[]>>();
 const subtitleCues = new Map<string, SubtitleCue[]>();
 const clipApiBase = new URL(process.env.CLIP_API_URL || "http://100.98.83.82:8765");
 const clipMediaRoot = path.resolve(process.env.CLIP_MEDIA_ROOT || "/home/koushik/Downloads");
+const transcodeCacheDirectory = path.join(os.tmpdir(), "tailscreen-transcodes");
+const transcodes = new Map<string, Promise<string>>();
 
-function responseTarget(response: Response): WritableStream<Uint8Array> {
-  return new WritableStream({
-    write(chunk) {
-      if (response.destroyed) return;
-      if (response.write(chunk)) return;
-      return new Promise<void>((resolve, reject) => {
-        const cleanup = () => {
-          response.off("drain", ready);
-          response.off("close", ready);
-          response.off("error", failed);
-        };
-        const ready = () => { cleanup(); resolve(); };
-        const failed = (error: Error) => { cleanup(); reject(error); };
-        response.once("drain", ready);
-        response.once("close", ready);
-        response.once("error", failed);
-      });
-    },
-    close() {
-      if (!response.destroyed && !response.writableEnded) response.end();
-    },
-    abort() {
-      if (!response.destroyed) response.destroy();
-    },
-  });
+async function compatibleWindowPath(item: MediaItem, window: { start: number; duration: number }): Promise<string> {
+  await mkdir(transcodeCacheDirectory, { recursive: true });
+  const version = Date.parse(item.modifiedAt);
+  const name = `${item.id}-${version}-${Math.round(window.start * 1000)}-${Math.round(window.duration * 1000)}.mp4`;
+  const outputPath = path.join(transcodeCacheDirectory, name);
+  if (await stat(outputPath).then((details) => details.size > 0).catch(() => false)) return outputPath;
+
+  let pending = transcodes.get(outputPath);
+  if (!pending) {
+    pending = (async () => {
+      const partialPath = `${outputPath}.${process.pid}-${randomUUID()}.partial`;
+      const compatible = await createCompatibleWindow(item.path, partialPath, window);
+      try {
+        await compatible.execute();
+        await rename(partialPath, outputPath);
+        return outputPath;
+      } finally {
+        compatible.dispose();
+        await unlink(partialPath).catch(() => undefined);
+      }
+    })().finally(() => { transcodes.delete(outputPath); });
+    transcodes.set(outputPath, pending);
+  }
+  return pending;
 }
 
 async function refreshLibrary(): Promise<MediaItem[]> {
@@ -143,24 +146,14 @@ app.get("/api/media/:id/compatible", async (request, response, next) => {
     return response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
   }
 
-  let compatible: Awaited<ReturnType<typeof createCompatibleWindow>> | null = null;
   try {
-    compatible = await createCompatibleWindow(item.path, responseTarget(response), window);
-    response.setHeader("Content-Type", compatible.mimeType);
-    response.setHeader("Cache-Control", "no-store");
-    response.setHeader("X-Content-Type-Options", "nosniff");
-
-    const cancel = () => {
-      if (!response.writableEnded) void compatible?.cancel().catch(() => undefined);
-    };
-    response.once("close", cancel);
-    await compatible.execute();
-    response.off("close", cancel);
+    const filePath = await compatibleWindowPath(item, window);
+    if (response.destroyed) return;
+    response.setHeader("Content-Type", "video/mp4");
+    response.setHeader("Cache-Control", "private, max-age=3600");
+    return response.sendFile(filePath);
   } catch (error) {
-    if (!response.headersSent) next(error);
-    else if (!response.destroyed) response.destroy();
-  } finally {
-    compatible?.dispose();
+    if (!response.destroyed) next(error);
   }
 });
 
@@ -292,7 +285,12 @@ export function startServer() {
   }, config.scanIntervalMs);
   timer.unref();
 
-  return app.listen(config.port, "0.0.0.0", () => {
+  return app.listen(config.port, "0.0.0.0", (error?: Error) => {
+    if (error) {
+      console.error(`TailScreen could not listen on port ${config.port}: ${error.message}`);
+      process.exitCode = 1;
+      return;
+    }
     console.log(`TailScreen is listening on http://0.0.0.0:${config.port}`);
     console.log(`Using configuration: ${config.configPath}`);
   });
