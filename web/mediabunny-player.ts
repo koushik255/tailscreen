@@ -269,6 +269,7 @@ export class ServerConversionPlayer {
   private mediaId: string | null = null;
   private duration = 0;
   private windowStart = 0;
+  private windowLength = 0;
   private current = 0;
   private active = false;
   private wantsToPlay = false;
@@ -292,7 +293,7 @@ export class ServerConversionPlayer {
     });
     video.addEventListener("ended", () => {
       if (!this.active) return;
-      const next = Math.min(this.windowStart + Math.max(video.currentTime, 1), this.duration);
+      const next = Math.min(this.windowStart + this.windowLength, this.duration);
       this.current = next;
       if (next < this.duration - 0.1) void this.loadWindow(next, true);
       else this.events.onPlayingChange(false);
@@ -357,7 +358,8 @@ export class ServerConversionPlayer {
     this.onStatus(`Converting from ${formatPlayerTime(start)} on the server…`);
     this.video.pause();
     const duration = Math.min(ServerConversionPlayer.windowDuration, this.duration - start);
-    this.video.src = `/api/media/${encodeURIComponent(this.mediaId)}/compatible?start=${start}&duration=${duration}`;
+    this.windowLength = duration;
+    this.video.src = this.windowUrl(start, duration);
     this.video.load();
 
     await new Promise<void>((resolve, reject) => {
@@ -376,7 +378,16 @@ export class ServerConversionPlayer {
     });
     if (loadId !== this.loadId || !this.active) return;
     this.onStatus("Server-compatible playback is ready.");
+    const next = start + duration;
+    if (next < this.duration) {
+      const nextDuration = Math.min(ServerConversionPlayer.windowDuration, this.duration - next);
+      void fetch(this.windowUrl(next, nextDuration), { method: "HEAD" }).catch(() => undefined);
+    }
     if (autoplay) await this.video.play().catch(() => undefined);
+  }
+
+  private windowUrl(start: number, duration: number): string {
+    return `/api/media/${encodeURIComponent(this.mediaId!)}/compatible?start=${start}&duration=${duration}`;
   }
 }
 
