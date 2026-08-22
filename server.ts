@@ -1,9 +1,8 @@
-import express, { type ErrorRequestHandler } from "express";
+import express, { type ErrorRequestHandler, type Response } from "express";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { clipMediaPath, clipServiceUrl } from "./lib/clips.js";
 import { loadConfig } from "./lib/config.js";
@@ -27,6 +26,33 @@ const subtitleTracks = new Map<string, Promise<EmbeddedSubtitleTrack[]>>();
 const subtitleCues = new Map<string, SubtitleCue[]>();
 const clipApiBase = new URL(process.env.CLIP_API_URL || "http://100.98.83.82:8765");
 const clipMediaRoot = path.resolve(process.env.CLIP_MEDIA_ROOT || "/home/koushik/Downloads");
+
+function responseTarget(response: Response): WritableStream<Uint8Array> {
+  return new WritableStream({
+    write(chunk) {
+      if (response.destroyed) return;
+      if (response.write(chunk)) return;
+      return new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          response.off("drain", ready);
+          response.off("close", ready);
+          response.off("error", failed);
+        };
+        const ready = () => { cleanup(); resolve(); };
+        const failed = (error: Error) => { cleanup(); reject(error); };
+        response.once("drain", ready);
+        response.once("close", ready);
+        response.once("error", failed);
+      });
+    },
+    close() {
+      if (!response.destroyed && !response.writableEnded) response.end();
+    },
+    abort() {
+      if (!response.destroyed) response.destroy();
+    },
+  });
+}
 
 async function refreshLibrary(): Promise<MediaItem[]> {
   if (scanInFlight) return scanInFlight;
@@ -119,21 +145,20 @@ app.get("/api/media/:id/compatible", async (request, response, next) => {
 
   let compatible: Awaited<ReturnType<typeof createCompatibleWindow>> | null = null;
   try {
-    const target = Writable.toWeb(response) as WritableStream<Uint8Array>;
-    compatible = await createCompatibleWindow(item.path, target, window);
+    compatible = await createCompatibleWindow(item.path, responseTarget(response), window);
     response.setHeader("Content-Type", compatible.mimeType);
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");
 
     const cancel = () => {
-      if (!response.writableEnded) void compatible?.cancel();
+      if (!response.writableEnded) void compatible?.cancel().catch(() => undefined);
     };
     response.once("close", cancel);
     await compatible.execute();
     response.off("close", cancel);
   } catch (error) {
     if (!response.headersSent) next(error);
-    else response.destroy(error instanceof Error ? error : undefined);
+    else if (!response.destroyed) response.destroy();
   } finally {
     compatible?.dispose();
   }
