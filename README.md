@@ -4,22 +4,22 @@ TailScreen is a small, installable web app for browsing videos on a server from 
 
 - search the server's video library;
 - play browser-supported video directly; and
-- fall back to Mediabunny playback for other containers and codecs;
+- fall back to compatible server playback for other containers and codecs;
 - automatically show text subtitles embedded in MKV files; and
 - load a local SRT, ASS, or SSA file with the **Add subtitles** button; and
 - create a 1–60 second MP4 clip ending at the current playback position through StopAndGo.
 
-The compatibility player decodes supported video progressively and sends decoded audio through Web Audio. AC-3, DTS, and ProRes fallback decoders are included. If Safari cannot decode the video, TailScreen uses `@mediabunny/server` to stream a 1080p H.264/AAC MP4 window. This covers AV1 and HEVC on iPads that do not expose those codecs through WebCodecs.
+The compatibility player first tries Mediabunny's browser decoders. AC-3, DTS, and ProRes fallback decoders are included. If Safari cannot decode the video, TailScreen starts a rolling FFmpeg HLS stream using H.264 video and stereo AAC audio. This covers AV1, HEVC, and unsupported surround-audio formats on iPads. HDR10 and HLG sources are detected with FFprobe and tone-mapped to SDR for reliable iPad display.
 
 When an MKV contains text subtitles, TailScreen automatically chooses an English track when available, or the first subtitle track otherwise. Captions use a custom Arial overlay. Files selected with **Add subtitles** are read only by the browser and are not uploaded to the server.
 
-The server fallback converts and caches only the next 30 seconds. Clicking anywhere on TailScreen's global timeline requests a new window at that movie timestamp, so random seeking does not require converting the entire movie first. Each window is served as a byte-range MP4 that Safari can seek within, and the next window begins automatically.
+The server fallback generates small HLS segments as they are watched instead of converting the whole movie. Clicking anywhere on TailScreen's global timeline starts a new HLS session at that movie timestamp, so arbitrary seeking only takes a few seconds. Pausing also pauses FFmpeg, and old rolling segments and abandoned sessions are cleaned up automatically.
 
 No cloud service or public port is required. This first version intentionally relies on your Tailscale network and ACLs as the access boundary.
 
 ## Server setup
 
-Requirements: Node.js 20+ and Tailscale installed on both devices.
+Requirements: Node.js 20+, FFmpeg/FFprobe with `libx264` (and `zscale` for HDR), and Tailscale installed on both devices.
 
 ```bash
 npm install

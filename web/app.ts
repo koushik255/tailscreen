@@ -1,7 +1,7 @@
 import {
   canPlayNatively,
   CompatibilityPlayer,
-  ServerConversionPlayer,
+  ServerHlsPlayer,
   UnsupportedVideoError,
 } from "./mediabunny-player.js";
 import { SubtitleController } from "./subtitles.js";
@@ -67,7 +67,7 @@ const player = new CompatibilityPlayer(canvas, {
     subtitles.update(current);
   },
 });
-const serverPlayer = new ServerConversionPlayer(
+const serverPlayer = new ServerHlsPlayer(
   nativeVideo,
   {
     onError: (message) => { status.textContent = message; },

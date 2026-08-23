@@ -264,12 +264,11 @@ export class CompatibilityPlayer {
   }
 }
 
-export class ServerConversionPlayer {
-  private static readonly windowDuration = 30;
+export class ServerHlsPlayer {
   private mediaId: string | null = null;
+  private sessionId: string | null = null;
   private duration = 0;
-  private windowStart = 0;
-  private windowLength = 0;
+  private sessionStart = 0;
   private current = 0;
   private active = false;
   private wantsToPlay = false;
@@ -282,7 +281,7 @@ export class ServerConversionPlayer {
   ) {
     video.addEventListener("timeupdate", () => {
       if (!this.active) return;
-      this.current = Math.min(this.windowStart + video.currentTime, this.duration);
+      this.current = Math.min(this.sessionStart + Math.max(video.currentTime, 0), this.duration);
       this.events.onTimeChange(this.current, this.duration);
     });
     video.addEventListener("play", () => {
@@ -293,14 +292,13 @@ export class ServerConversionPlayer {
     });
     video.addEventListener("ended", () => {
       if (!this.active) return;
-      const next = Math.min(this.windowStart + this.windowLength, this.duration);
-      this.current = next;
-      if (next < this.duration - 0.1) void this.loadWindow(next, true);
-      else this.events.onPlayingChange(false);
+      this.current = this.duration;
+      this.events.onTimeChange(this.current, this.duration);
+      this.events.onPlayingChange(false);
     });
     video.addEventListener("error", () => {
       if (this.active && video.error?.code !== MediaError.MEDIA_ERR_ABORTED) {
-        this.events.onError("The server-converted video could not be played.");
+        this.events.onError("Safari could not play the server HLS stream.");
       }
     });
   }
@@ -316,7 +314,12 @@ export class ServerConversionPlayer {
     this.video.controls = false;
     this.video.hidden = false;
     this.events.onTimeChange(0, duration);
-    await this.loadWindow(0, true);
+    try {
+      await this.loadSession(0, true);
+    } catch (error) {
+      this.removeSession();
+      throw error;
+    }
   }
 
   destroy(): void {
@@ -324,48 +327,104 @@ export class ServerConversionPlayer {
     this.active = false;
     this.wantsToPlay = false;
     this.mediaId = null;
+    this.removeSession();
     this.video.pause();
     this.video.removeAttribute("src");
     this.video.load();
   }
 
   async play(): Promise<void> {
+    if (this.current >= this.duration) await this.seek(0);
     this.wantsToPlay = true;
+    if (this.sessionId) await this.setSessionPaused(false);
     await this.video.play();
   }
 
   pause(): void {
     this.wantsToPlay = false;
     this.video.pause();
+    if (this.sessionId) void this.setSessionPaused(true);
   }
 
   async seek(seconds: number): Promise<void> {
     this.current = Math.min(Math.max(seconds, 0), this.duration);
     this.events.onTimeChange(this.current, this.duration);
-    await this.loadWindow(this.current, this.wantsToPlay);
+    if (this.current >= this.duration) {
+      this.video.pause();
+      this.removeSession();
+      return;
+    }
+    try {
+      await this.loadSession(this.current, this.wantsToPlay);
+    } catch (error) {
+      this.removeSession();
+      throw error;
+    }
   }
 
   setVolume(volume: number): void {
     this.video.volume = Math.max(0, Math.min(volume, 1));
   }
 
-  private async loadWindow(start: number, autoplay: boolean): Promise<void> {
+  private async loadSession(start: number, autoplay: boolean): Promise<void> {
     if (!this.mediaId || start >= this.duration) return;
     const loadId = ++this.loadId;
     this.wantsToPlay = autoplay;
-    this.windowStart = start;
+    this.sessionStart = start;
     this.current = start;
-    this.onStatus(`Converting from ${formatPlayerTime(start)} on the server…`);
+    this.onStatus(`Starting playback from ${formatPlayerTime(start)}…`);
     this.video.pause();
-    const duration = Math.min(ServerConversionPlayer.windowDuration, this.duration - start);
-    this.windowLength = duration;
-    this.video.src = this.windowUrl(start, duration);
+    this.video.removeAttribute("src");
     this.video.load();
+    this.removeSession();
 
+    const created = await requestJson<{
+      id: string;
+      statusUrl: string;
+      playlistUrl: string;
+    }>(`/api/media/${encodeURIComponent(this.mediaId)}/playback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ start }),
+    });
+    if (loadId !== this.loadId || !this.active) {
+      void fetch(`/api/playback/${encodeURIComponent(created.id)}`, { method: "DELETE" });
+      return;
+    }
+    this.sessionId = created.id;
+
+    let playlistUrl = created.playlistUrl;
+    let streamReady = false;
+    const deadline = Date.now() + 90_000;
+    while (Date.now() < deadline) {
+      let session;
+      try {
+        session = await requestJson<{
+          state: "starting" | "ready" | "complete" | "failed";
+          error?: string;
+          playlistUrl: string;
+        }>(created.statusUrl, { cache: "no-store" });
+      } catch (error) {
+        if (loadId !== this.loadId || !this.active) return;
+        throw error;
+      }
+      if (loadId !== this.loadId || !this.active) return;
+      if (session.state === "failed") throw new Error(session.error || "FFmpeg could not create compatible playback.");
+      if (session.state === "ready" || session.state === "complete") {
+        playlistUrl = session.playlistUrl;
+        streamReady = true;
+        break;
+      }
+      await delay(500);
+    }
+    if (!streamReady) throw new Error("The server took too long to start compatible playback.");
+
+    this.video.src = playlistUrl;
+    this.video.load();
     await new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(() => finish(new Error("Server conversion took too long to start.")), 120_000);
+      const timeout = window.setTimeout(() => finish(new Error("The HLS stream took too long to load.")), 90_000);
       const ready = () => finish();
-      const failed = () => finish(new Error("The server could not create compatible playback."));
+      const failed = () => finish(new Error("Safari could not play the server HLS stream."));
       const finish = (error?: Error) => {
         clearTimeout(timeout);
         this.video.removeEventListener("canplay", ready);
@@ -377,18 +436,43 @@ export class ServerConversionPlayer {
       this.video.addEventListener("error", failed, { once: true });
     });
     if (loadId !== this.loadId || !this.active) return;
-    this.onStatus("Server-compatible playback is ready.");
-    const next = start + duration;
-    if (next < this.duration) {
-      const nextDuration = Math.min(ServerConversionPlayer.windowDuration, this.duration - next);
-      void fetch(this.windowUrl(next, nextDuration), { method: "HEAD" }).catch(() => undefined);
+    this.onStatus("Compatible playback is ready.");
+    if (autoplay) {
+      await this.video.play().catch(() => {
+        this.onStatus("Compatible playback is ready. Tap Play to begin.");
+      });
+    } else {
+      void this.setSessionPaused(true);
     }
-    if (autoplay) await this.video.play().catch(() => undefined);
   }
 
-  private windowUrl(start: number, duration: number): string {
-    return `/api/media/${encodeURIComponent(this.mediaId!)}/compatible?start=${start}&duration=${duration}`;
+  private removeSession(): void {
+    const id = this.sessionId;
+    this.sessionId = null;
+    if (id) {
+      void fetch(`/api/playback/${encodeURIComponent(id)}`, { method: "DELETE", keepalive: true })
+        .catch(() => undefined);
+    }
   }
+
+  private async setSessionPaused(paused: boolean): Promise<void> {
+    const id = this.sessionId;
+    if (!id) return;
+    await fetch(`/api/playback/${encodeURIComponent(id)}/${paused ? "pause" : "resume"}`, {
+      method: "POST",
+    }).catch(() => undefined);
+  }
+}
+
+async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
+  const payload = await response.json().catch(() => ({})) as { error?: string };
+  if (!response.ok) throw new Error(payload.error || `Playback request failed (${response.status}).`);
+  return payload as T;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function formatPlayerTime(seconds: number): string {

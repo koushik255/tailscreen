@@ -1,8 +1,8 @@
 /// <reference lib="webworker" />
 
 const worker = globalThis as unknown as ServiceWorkerGlobalScope;
-const CACHE = "tailscreen-shell-v13";
-const SHELL = ["/", "/styles.css?v=13", "/app.js?v=13", "/icon.svg", "/apple-touch-icon.png", "/manifest.webmanifest"];
+const CACHE = "tailscreen-shell-v14";
+const SHELL = ["/", "/styles.css?v=14", "/app.js?v=14", "/icon.svg", "/apple-touch-icon.png", "/manifest.webmanifest"];
 
 worker.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));

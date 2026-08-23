@@ -1,15 +1,13 @@
-import { randomUUID } from "node:crypto";
 import express, { type ErrorRequestHandler } from "express";
 import { createReadStream } from "node:fs";
-import { mkdir, rename, stat, unlink } from "node:fs/promises";
-import os from "node:os";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { clipMediaPath, clipServiceUrl } from "./lib/clips.js";
 import { loadConfig } from "./lib/config.js";
+import { HlsPlaybackManager, parsePlaybackStart } from "./lib/hls-playback.js";
 import { type MediaItem, publicMediaItem, scanMedia } from "./lib/media-library.js";
-import { createCompatibleWindow, parseTranscodeWindow } from "./lib/server-transcode.js";
 import {
   extractEmbeddedSubtitleTrack,
   type EmbeddedSubtitleTrack,
@@ -28,34 +26,7 @@ const subtitleTracks = new Map<string, Promise<EmbeddedSubtitleTrack[]>>();
 const subtitleCues = new Map<string, SubtitleCue[]>();
 const clipApiBase = new URL(process.env.CLIP_API_URL || "http://100.98.83.82:8765");
 const clipMediaRoot = path.resolve(process.env.CLIP_MEDIA_ROOT || "/home/koushik/Downloads");
-const transcodeCacheDirectory = path.join(os.tmpdir(), "tailscreen-transcodes");
-const transcodes = new Map<string, Promise<string>>();
-
-async function compatibleWindowPath(item: MediaItem, window: { start: number; duration: number }): Promise<string> {
-  await mkdir(transcodeCacheDirectory, { recursive: true });
-  const version = Date.parse(item.modifiedAt);
-  const name = `${item.id}-${version}-${Math.round(window.start * 1000)}-${Math.round(window.duration * 1000)}.mp4`;
-  const outputPath = path.join(transcodeCacheDirectory, name);
-  if (await stat(outputPath).then((details) => details.size > 0).catch(() => false)) return outputPath;
-
-  let pending = transcodes.get(outputPath);
-  if (!pending) {
-    pending = (async () => {
-      const partialPath = `${outputPath}.${process.pid}-${randomUUID()}.partial`;
-      const compatible = await createCompatibleWindow(item.path, partialPath, window);
-      try {
-        await compatible.execute();
-        await rename(partialPath, outputPath);
-        return outputPath;
-      } finally {
-        compatible.dispose();
-        await unlink(partialPath).catch(() => undefined);
-      }
-    })().finally(() => { transcodes.delete(outputPath); });
-    transcodes.set(outputPath, pending);
-  }
-  return pending;
-}
+const hlsPlayback = new HlsPlaybackManager();
 
 async function refreshLibrary(): Promise<MediaItem[]> {
   if (scanInFlight) return scanInFlight;
@@ -135,25 +106,71 @@ app.get("/api/media/:id/stream", async (request, response, next) => {
   }
 });
 
-app.get("/api/media/:id/compatible", async (request, response, next) => {
+app.post("/api/media/:id/playback", async (request, response, next) => {
   const item = mediaById.get(request.params.id);
   if (!item) return response.status(404).json({ error: "Media item not found" });
 
-  let window;
+  let start;
   try {
-    window = parseTranscodeWindow(request.query.start, request.query.duration);
+    start = parsePlaybackStart(request.body?.start);
   } catch (error) {
     return response.status(400).json({ error: error instanceof Error ? error.message : String(error) });
   }
 
   try {
-    const filePath = await compatibleWindowPath(item, window);
-    if (response.destroyed) return;
-    response.setHeader("Content-Type", "video/mp4");
-    response.setHeader("Cache-Control", "private, max-age=3600");
-    return response.sendFile(filePath);
+    const session = await hlsPlayback.create(item.id, item.path, start);
+    response.status(202).json({
+      ...session,
+      statusUrl: `/api/playback/${session.id}`,
+      playlistUrl: `/api/playback/${session.id}/index.m3u8`,
+    });
   } catch (error) {
-    if (!response.destroyed) next(error);
+    next(error);
+  }
+});
+
+app.get("/api/playback/:sessionId", async (request, response, next) => {
+  try {
+    const session = await hlsPlayback.get(request.params.sessionId);
+    if (!session) return response.status(404).json({ error: "Playback session not found" });
+    response.setHeader("Cache-Control", "no-store");
+    response.json({
+      ...session,
+      playlistUrl: `/api/playback/${session.id}/index.m3u8`,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/playback/:sessionId/:action", (request, response) => {
+  const action = request.params.action;
+  if (action !== "pause" && action !== "resume") return response.status(404).json({ error: "Unknown playback action" });
+  if (!hlsPlayback.setPaused(request.params.sessionId, action === "pause")) {
+    return response.status(404).json({ error: "Playback session is no longer running" });
+  }
+  response.status(204).end();
+});
+
+app.delete("/api/playback/:sessionId", (request, response) => {
+  hlsPlayback.remove(request.params.sessionId);
+  response.status(204).end();
+});
+
+app.get("/api/playback/:sessionId/:fileName", async (request, response, next) => {
+  try {
+    const filePath = await hlsPlayback.file(request.params.sessionId, request.params.fileName);
+    if (!filePath) return response.status(404).end();
+    if (request.params.fileName.endsWith(".m3u8")) {
+      response.type("application/vnd.apple.mpegurl");
+      response.setHeader("Cache-Control", "no-store");
+    } else {
+      response.type("video/mp4");
+      response.setHeader("Cache-Control", "private, max-age=300");
+    }
+    response.sendFile(filePath);
+  } catch (error) {
+    next(error);
   }
 });
 
