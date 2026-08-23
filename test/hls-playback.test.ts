@@ -15,6 +15,7 @@ test("builds a bounded rolling HLS stream with iPad codecs", () => {
   assert.deepEqual(args.slice(args.indexOf("-ss"), args.indexOf("-ss") + 2), ["-ss", "90"]);
   assert.deepEqual(args.slice(args.indexOf("-c:v"), args.indexOf("-c:v") + 2), ["-c:v", "libx264"]);
   assert.deepEqual(args.slice(args.indexOf("-c:a"), args.indexOf("-c:a") + 2), ["-c:a", "aac"]);
+  assert.deepEqual(args.slice(args.indexOf("-readrate"), args.indexOf("-readrate") + 2), ["-readrate", "1.05"]);
   assert.deepEqual(args.slice(args.indexOf("-hls_list_size"), args.indexOf("-hls_list_size") + 2), ["-hls_list_size", "12"]);
   assert.equal(args.at(-1), path.join(directory, "index.m3u8"));
 });
